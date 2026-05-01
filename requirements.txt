@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────
+#  MAAN — Chat with Books
+#  Install with: pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────
+
+# Core PDF engine
+pymupdf>=1.23.0
+
+# Image processing
+pillow>=10.0.0
+numpy>=1.24.0
+
+# Async / progress
+tqdm>=4.65.0
+
+# Logging
+loguru>=0.7.0
+
+# ── Embeddings & Search ───────────────────────────────────────
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4          # Use faiss-gpu if you have CUDA toolkit
+
+# ── Local LLM (RTX 4050 GPU) ─────────────────────────────────
+# GPU version (recommended — runs on RTX 4050):
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+#
+# CPU fallback:
+#   pip install llama-cpp-python
+llama-cpp-python>=0.2.0
+
+# ── Web API ───────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# ── OCR (CPU fallback) ────────────────────────────────────────
+pytesseract>=0.3.10
+# Tesseract binary: https://github.com/UB-Mannheim/tesseract/wiki
+
+# ── GPU OCR (ONNX CUDA) ───────────────────────────────────────
+# Uncomment when you have an ONNX OCR model:
+# onnxruntime-gpu>=1.16.0
+
+# ── Windows Service ───────────────────────────────────────────
+# pywin32>=306         # Uncomment on Windows for service support
