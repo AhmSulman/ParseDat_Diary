@@ -26,7 +26,7 @@ from config.config import Config
 
 
 class RAGPipeline:
-    def __init__(self, model_path: str = None, gpu_layers: int = None):
+    def __init__(self, model_path: str | None = None, gpu_layers: int | None = None):
         cfg = Config()
         self.retriever = Retriever()
         self.llm = LocalLLM(model_path=model_path, gpu_layers=gpu_layers)

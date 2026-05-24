@@ -1,0 +1,59 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:        # Allow manual trigger from GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache buildozer global directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk \
+            python3-pip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libtinfo5 cmake libffi-dev libssl-dev \
+            build-essential ccache libltdl-dev
+
+      - name: Install buildozer + Cython
+        run: pip install --upgrade buildozer cython
+
+      - name: Set up Android SDK/NDK (via buildozer init)
+        run: buildozer android update
+
+      - name: Build debug APK
+        run: buildozer -v android debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maan-debug-apk
+          path: bin/*.apk
+          retention-days: 30
+
+      - name: Post APK size
+        run: |
+          APK=$(ls bin/*.apk | head -1)
+          SIZE=$(du -sh "$APK" | cut -f1)
+          echo "APK: $APK ($SIZE)"

@@ -27,34 +27,46 @@ from config.config import Config
 
 
 class LocalLLM:
-    def __init__(self, model_path: str = None, gpu_layers: int = None):
+    def __init__(self, model_path: str | None = None, gpu_layers: int | None = None):
         cfg = Config()
         self.model_path = model_path or cfg.LLM_MODEL_PATH
         self.gpu_layers = gpu_layers if gpu_layers is not None else cfg.LLM_GPU_LAYERS
         self.context_size = cfg.LLM_CONTEXT_SIZE
-        self.max_tokens = cfg.LLM_MAX_TOKENS
+        self.max_tokens = cfg.LLM_MAX_TOKENS   # -1 = unlimited
         self.temperature = cfg.LLM_TEMPERATURE
+        self.n_batch = cfg.LLM_N_BATCH
+        self.n_threads = cfg.LLM_N_THREADS
         self._llm = None
 
     def load(self):
         """Load the model into memory (GPU layers go to RTX 4050 VRAM)."""
         if not self.model_path or not os.path.exists(self.model_path):
-            log.error(f"❌ Model not found: {self.model_path}")
-            log.error("   Download a .gguf model from https://huggingface.co/TheBloke")
-            log.error("   Then set LLM_MODEL_PATH in config/config.py")
-            return False
+            log.warning(f"⚠️  Model not found: {self.model_path} — attempting auto-download…")
+            try:
+                from data.models.auto_download import download_model
+                self.model_path = download_model()
+            except Exception as dl_err:
+                log.error(f"❌ Auto-download failed: {dl_err}")
+                log.error("   Manually place a .gguf in data/models/ and set LLM_MODEL_PATH")
+                return False
 
         try:
             from llama_cpp import Llama
 
             log.info(f"🧠 Loading LLM: {os.path.basename(self.model_path)}")
-            log.info(f"   GPU layers: {self.gpu_layers} → RTX 4050 VRAM")
+            log.info(f"   GPU layers : {self.gpu_layers} → RTX 4050 VRAM")
+            log.info(f"   Context    : {self.context_size} tokens")
+            log.info(f"   Batch size : {self.n_batch} (faster prompt eval)")
+            log.info(f"   Threads    : {self.n_threads}")
 
             self._llm = Llama(
                 model_path=self.model_path,
-                n_gpu_layers=self.gpu_layers,   # How many layers run on GPU
-                n_ctx=self.context_size,         # Context window size
-                n_batch=512,                     # Batch size for prompt processing
+                n_gpu_layers=self.gpu_layers,
+                n_ctx=self.context_size,
+                n_batch=self.n_batch,      # larger = faster prompt processing
+                n_threads=self.n_threads,  # use all CPU cores for non-GPU layers
+                use_mmap=True,             # memory-mapped loading (faster cold start)
+                use_mlock=False,           # let OS manage physical memory
                 verbose=False,
             )
 
@@ -63,8 +75,8 @@ class LocalLLM:
 
         except ImportError:
             log.error("❌ llama-cpp-python not installed")
-            log.error("   GPU version: pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121")
-            log.error("   CPU version: pip install llama-cpp-python")
+            log.error("   GPU: pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121")
+            log.error("   CPU: pip install llama-cpp-python")
             return False
 
         except Exception as e:
@@ -92,7 +104,7 @@ class LocalLLM:
         try:
             output = self._llm(
                 prompt,
-                max_tokens=self.max_tokens,
+                max_tokens=self.max_tokens,   # -1 = no hard cap
                 temperature=self.temperature,
                 stop=["</s>", "[INST]", "User:", "\n\nQuestion:"],
                 stream=stream,
@@ -111,19 +123,18 @@ class LocalLLM:
 
     def build_rag_prompt(self, question: str, context_chunks: list[dict]) -> str:
         """
-        Build a RAG (Retrieval-Augmented Generation) prompt.
-
-        Combines retrieved document chunks with the user's question
-        so the LLM can answer based on the actual book content.
+        Build a RAG prompt combining retrieved chunks with the user's question.
+        Context per chunk capped at 1200 chars (covers most paragraphs fully).
         """
         context_text = ""
         for i, chunk in enumerate(context_chunks, 1):
             source = chunk.get("source", "unknown")
-            text = chunk.get("chunk", "")[:800]
+            # Chunks are ~400 chars; pass full text for maximum precision
+            text = chunk.get("chunk", "")[:600]
             context_text += f"\n[Source {i}: {source}]\n{text}\n"
 
         prompt = f"""[INST] You are MAAN, an AI assistant that answers questions based on the provided book excerpts.
-Answer clearly and helpfully using ONLY the context below.
+Answer clearly and completely using ONLY the context below. Do not truncate your answer.
 If the answer is not in the context, say so honestly.
 
 CONTEXT:

@@ -1,0 +1,55 @@
+# ── Virtual environments ──────────────────────────────────────
+_venv/
+.venv/
+venv/
+env/
+ENV/
+
+# ── Python bytecode ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Data — heavy / generated ──────────────────────────────────
+# Models: .gguf files are too large for plain git — auto-downloaded on first run
+data/models/*.gguf
+data/models/*.bin
+# Keep data/models/ folder itself tracked (has auto_download.py)
+data/cache/
+data/checkpoints/
+data/txt/
+data/json/
+# Keep data/input/ tracked (drop your PDFs here)
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/app.log
+logs/*.log
+
+# ── OS junk ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor / IDE ──────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Build artifacts ───────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── Android / Buildozer ───────────────────────────────────────
+.buildozer/
+bin/
+*.apk
+*.aab
+
+# ── Env / secrets ────────────────────────────────────────────
+.env
+*.env
+secrets.json

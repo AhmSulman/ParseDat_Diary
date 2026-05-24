@@ -208,7 +208,7 @@ class AsyncPipeline:
 
     # ── Stage 4: Embedder (background) ───────────────────────────────────────
     async def _embed_worker(self):
-        """Chunks text and adds to FAISS vector index."""
+        """Chunks text and batch-adds to FAISS (GPU-accelerated when available)."""
         while True:
             job = await self.embed_queue.get()
 
@@ -217,12 +217,16 @@ class AsyncPipeline:
 
             try:
                 chunks = self.chunker.chunk(job["text"])
-                for chunk in chunks:
-                    await asyncio.to_thread(
-                        self.retriever.add, chunk, {"source": job["name"]}
-                    )
+                if not chunks:
+                    continue
+                metas = [{"source": job["name"]}] * len(chunks)
+                # add_batch uses GPU batch embedding -- much faster than one-by-one
+                await asyncio.to_thread(
+                    self.retriever.add_batch, chunks, metas
+                )
+                log.info(f"   Indexed {len(chunks)} chunks from {job['name']}")
             except Exception as e:
-                log.warning(f"⚠️  Embed failed: {job['name']} — {e}")
+                log.warning(f"Embed failed: {job['name']} -- {e}")
 
     def _list_pdfs(self) -> list:
         os.makedirs(self.cfg.INPUT_DIR, exist_ok=True)

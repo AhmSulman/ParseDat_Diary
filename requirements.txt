@@ -1,44 +1,64 @@
 # ─────────────────────────────────────────────────────────────
 #  MAAN — Chat with Books
-#  Install with: pip install -r requirements.txt
+#  Python 3.12.0  |  Venv: _venv
+#  pip install -r requirements.txt
 # ─────────────────────────────────────────────────────────────
 
-# Core PDF engine
-pymupdf>=1.23.0
+# ── GUI ───────────────────────────────────────────────────────
+kivy==2.3.0                  # 2.3.0 = first release with Python 3.12 wheels
+kivymd==1.2.0                # requires kivy>=2.2
 
-# Image processing
-pillow>=10.0.0
-numpy>=1.24.0
+# ── PDF ───────────────────────────────────────────────────────
+pymupdf>=1.24.0              # tested on 1.27.2; import as fitz
 
-# Async / progress
-tqdm>=4.65.0
+# ── Images / arrays ───────────────────────────────────────────
+pillow>=10.0.0               # tested on 12.2.0 in _venv
+numpy>=1.26.0                # 1.26+ required for Python 3.12; tested on 2.4.6
 
-# Logging
-loguru>=0.7.0
+# ── Embeddings ────────────────────────────────────────────────
+sentence-transformers>=3.0.0 # pulls transformers, torch, huggingface_hub
 
-# ── Embeddings & Search ───────────────────────────────────────
-sentence-transformers>=2.2.2
-faiss-cpu>=1.7.4          # Use faiss-gpu if you have CUDA toolkit
+# ── Vector search ─────────────────────────────────────────────
+faiss-cpu>=1.7.4             # tested on 1.14.2; GPU path: faiss-gpu
+# faiss-gpu>=1.8.0           # uncomment for CUDA vector search
 
-# ── Local LLM (RTX 4050 GPU) ─────────────────────────────────
-# GPU version (recommended — runs on RTX 4050):
-#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
-#
+# ── PyTorch (for GPU embedding) ───────────────────────────────
+# Already in _venv as torch 2.12.0 with CUDA support.
+# To install fresh:
+#   CPU:  pip install torch
+#   CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+
+# ── Local LLM ─────────────────────────────────────────────────
+# RTX 4050 — CUDA 12.1 pre-built wheel:
+#   pip install llama-cpp-python \
+#       --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
 # CPU fallback:
 #   pip install llama-cpp-python
-llama-cpp-python>=0.2.0
+llama-cpp-python>=0.3.2
+
+# ── OCR ───────────────────────────────────────────────────────
+pytesseract>=0.3.10          # tested 0.3.13
 
 # ── Web API ───────────────────────────────────────────────────
 fastapi>=0.104.0
-uvicorn>=0.24.0
+uvicorn[standard]>=0.24.0    # tested 0.48.0
+pydantic>=2.0.0
+httpx>=0.25.0
 
-# ── OCR (CPU fallback) ────────────────────────────────────────
-pytesseract>=0.3.10
-# Tesseract binary: https://github.com/UB-Mannheim/tesseract/wiki
+# ── CLI / logging ─────────────────────────────────────────────
+click>=8.1.7                 # tested 8.4.1
+rich>=13.0.0
+tqdm>=4.65.0                 # tested 4.67.3
+loguru>=0.7.0                # tested 0.7.3
 
-# ── GPU OCR (ONNX CUDA) ───────────────────────────────────────
-# Uncomment when you have an ONNX OCR model:
-# onnxruntime-gpu>=1.16.0
+# ── Networking / utilities ────────────────────────────────────
+requests>=2.31.0             # tested 2.34.2
+python-dotenv>=1.0.0         # tested 1.2.2
 
-# ── Windows Service ───────────────────────────────────────────
-# pywin32>=306         # Uncomment on Windows for service support
+# ── Windows ───────────────────────────────────────────────────
+pywin32>=306                 # tested 311 (already in _venv)
+# pypiwin32>=223             # also already in _venv
+
+# ── Android packaging (Linux only) ───────────────────────────
+# buildozer>=1.5.0
