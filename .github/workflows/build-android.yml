@@ -39,10 +39,19 @@ jobs:
       - name: Install buildozer + Cython
         run: pip install --upgrade buildozer cython
 
-      - name: Set up Android SDK/NDK (via buildozer init)
-        run: buildozer android update
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | buildozer android update 2>/dev/null || true
+          SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          if [ -d "$SDK_ROOT/cmdline-tools" ]; then
+            yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
+          fi
 
       - name: Build debug APK
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: buildozer -v android debug
 
       - name: Upload APK artifact

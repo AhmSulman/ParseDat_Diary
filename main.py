@@ -60,6 +60,11 @@ def main():
     search_p.add_argument("query", type=str, help="Search query")
     search_p.add_argument("--top-k", type=int, default=5)
 
+    # ── gui ───────────────────────────────────────────────────────────────────
+    gui_p = subparsers.add_parser("gui", help="Launch Material Design GUI")
+    gui_p.add_argument("--model", type=str, default=None, help="Path to .gguf model")
+    gui_p.add_argument("--gpu-layers", type=int, default=None, help="GPU layers for LLM")
+
     # ── service ───────────────────────────────────────────────────────────────
     svc_p = subparsers.add_parser("service", help="Windows service management")
     svc_p.add_argument("action", choices=["install", "remove", "start", "stop", "status"])
@@ -90,6 +95,10 @@ def main():
         for i, res in enumerate(results, 1):
             print(f"  [{i}] {res['source']}  (score: {res['score']:.4f})")
             print(f"      {res['chunk'][:200].strip()}...\n")
+
+    elif args.command == "gui":
+        from gui.material_app import run_gui
+        run_gui(model_path=args.model, gpu_layers=args.gpu_layers)
 
     elif args.command == "service":
         from service.windows_service import ServiceManager
