@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     branches: [master, main]
-  workflow_dispatch:        # Allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -18,13 +18,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Pin system python3 → 3.12
+        run: |
+          PYTHON312=$(which python)
+          sudo update-alternatives --install /usr/bin/python3 python3 "$PYTHON312" 100
+          sudo update-alternatives --set python3 "$PYTHON312"
+          python3 --version
+
       - name: Cache buildozer global directory
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          key: ${{ runner.os }}-buildozer-py312-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            ${{ runner.os }}-buildozer-
+            ${{ runner.os }}-buildozer-py312-
 
       - name: Install system dependencies
         run: |
@@ -45,7 +52,7 @@ jobs:
           touch ~/.android/repositories.cfg
           yes | buildozer android update 2>/dev/null || true
           SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          if [ -d "$SDK_ROOT/cmdline-tools" ]; then
+          if [ -d "$SDK_ROOT/cmdline-tools/latest/bin" ]; then
             yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
           fi
 

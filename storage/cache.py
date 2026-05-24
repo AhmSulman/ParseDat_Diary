@@ -1,10 +1,12 @@
 import hashlib, json, os
 
-CACHE_FILE = "data/cache/hashes.json"
+_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_FILE = os.path.join(_ROOT, "data", "cache", "hashes.json")
+_CACHE_DIR = os.path.join(_ROOT, "data", "cache")
 
 class Cache:
     def __init__(self):
-        os.makedirs("data/cache", exist_ok=True)
+        os.makedirs(_CACHE_DIR, exist_ok=True)
         if not os.path.exists(CACHE_FILE):
             with open(CACHE_FILE,"w") as f: json.dump({},f)
         with open(CACHE_FILE) as f: self.hashes = json.load(f)

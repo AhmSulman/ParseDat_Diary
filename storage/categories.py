@@ -13,13 +13,14 @@ Format:
 import json
 import os
 
-CATEGORIES_FILE = "data/categories.json"
+_ROOT           = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CATEGORIES_FILE = os.path.join(_ROOT, "data", "categories.json")
 UNCATEGORIZED   = "Uncategorized"
 
 
 class CategoryManager:
     def __init__(self):
-        os.makedirs("data", exist_ok=True)
+        os.makedirs(os.path.join(_ROOT, "data"), exist_ok=True)
         self._data: dict[str, list[str]] = {}
         self.load()
 

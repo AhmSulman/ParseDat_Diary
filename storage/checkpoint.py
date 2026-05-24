@@ -1,11 +1,13 @@
 import json, os
 from logs.logger import log
 
-STATE_FILE = "data/checkpoints/state.json"
+_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATE_FILE = os.path.join(_ROOT, "data", "checkpoints", "state.json")
+_CKPT_DIR  = os.path.join(_ROOT, "data", "checkpoints")
 
 class Checkpoint:
     def __init__(self):
-        os.makedirs("data/checkpoints", exist_ok=True)
+        os.makedirs(_CKPT_DIR, exist_ok=True)
         if not os.path.exists(STATE_FILE):
             self._write({"done": [], "failed": []})
         self.state = self._read()

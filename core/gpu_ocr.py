@@ -60,12 +60,25 @@ class GPUOCRBatch:
     def _check_tesseract(self) -> bool:
         try:
             import pytesseract
+            import sys
+            if sys.platform == "win32":
+                import winreg, os
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Tesseract-OCR")
+                    install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
+                    tess_exe  = os.path.join(install_dir, "tesseract.exe")
+                    tess_data = os.path.join(install_dir, "tessdata")
+                    if os.path.exists(tess_exe):
+                        pytesseract.pytesseract.tesseract_cmd = tess_exe
+                    if os.path.exists(tess_data) and not os.environ.get("TESSDATA_PREFIX"):
+                        os.environ["TESSDATA_PREFIX"] = tess_data
+                except Exception:
+                    pass
             pytesseract.get_tesseract_version()
-            log.info("✅ Tesseract available as OCR backend")
+            log.info("Tesseract available as OCR backend")
             return True
         except Exception:
-            log.warning("⚠️  Tesseract not found — scanned pages will be skipped")
-            log.warning("    Windows install: https://github.com/UB-Mannheim/tesseract/wiki")
+            log.warning("Tesseract not found — scanned pages will be skipped")
             return False
 
     # ── Public API ────────────────────────────────────────────────────────────

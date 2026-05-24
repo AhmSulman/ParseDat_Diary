@@ -22,8 +22,9 @@ import numpy as np
 from logs.logger import log
 from brain.embedder import Embedder
 
-INDEX_FILE = "data/cache/maan.index"
-META_FILE  = "data/cache/maan_meta.json"
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INDEX_FILE = os.path.join(_ROOT, "data", "cache", "maan.index")
+META_FILE  = os.path.join(_ROOT, "data", "cache", "maan_meta.json")
 DIM = 384
 _HNSW_M = 32
 
