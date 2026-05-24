@@ -19,6 +19,11 @@ import os
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Windows: force UTF-8 so box-drawing chars in the banner don't crash
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from logs.logger import log
 
 
