@@ -9,7 +9,7 @@ source.exclude_patterns = *.pyc, *.pyo, *.gguf, *.bin, *.log
 
 version = 1.0.0
 
-requirements = python3==3.12,kivy==2.3.0,kivymd==1.2.0,requests,pillow,pymupdf
+requirements = hostpython3==3.12.13,python3==3.12,kivy==2.3.0,kivymd==1.2.0,requests,pillow,pymupdf
 
 # Android orientation
 orientation = portrait

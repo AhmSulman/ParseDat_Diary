@@ -20,6 +20,8 @@ data/cache/
 data/checkpoints/
 data/txt/
 data/json/
+# Tessdata: large trained models — auto-downloaded to data/tessdata/
+data/tessdata/
 # Keep data/input/ tracked (drop your PDFs here)
 
 # ── Logs ──────────────────────────────────────────────────────

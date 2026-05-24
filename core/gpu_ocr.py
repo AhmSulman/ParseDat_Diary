@@ -63,13 +63,19 @@ class GPUOCRBatch:
             import sys
             if sys.platform == "win32":
                 import winreg, os
+                # Prefer local tessdata in the project (no admin needed)
+                _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                local_tess = os.path.join(_here, "data", "tessdata")
+                if os.path.isdir(local_tess) and not os.environ.get("TESSDATA_PREFIX"):
+                    os.environ["TESSDATA_PREFIX"] = local_tess
                 try:
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Tesseract-OCR")
                     install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
-                    tess_exe  = os.path.join(install_dir, "tesseract.exe")
-                    tess_data = os.path.join(install_dir, "tessdata")
+                    tess_exe = os.path.join(install_dir, "tesseract.exe")
                     if os.path.exists(tess_exe):
                         pytesseract.pytesseract.tesseract_cmd = tess_exe
+                    # Fall back to system tessdata if local one doesn't exist
+                    tess_data = os.path.join(install_dir, "tessdata")
                     if os.path.exists(tess_data) and not os.environ.get("TESSDATA_PREFIX"):
                         os.environ["TESSDATA_PREFIX"] = tess_data
                 except Exception:
