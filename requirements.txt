@@ -1,64 +1,72 @@
 # ─────────────────────────────────────────────────────────────
 #  MAAN — Chat with Books
 #  Python 3.12.0  |  Venv: _venv
-#  pip install -r requirements.txt
+#
+#  Base install (CPU-safe, works everywhere):
+#      _venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+#  Then add GPU acceleration (NVIDIA only):
+#      see requirements-gpu.txt
+#
+#  Versions are PINNED to the set verified working on Python 3.12.0.
+#  These are not floors — `>=` is what let pip resolve a CPU-only torch
+#  and silently disable every GPU path in the app.
 # ─────────────────────────────────────────────────────────────
 
 # ── GUI ───────────────────────────────────────────────────────
-kivy==2.3.0                  # 2.3.0 = first release with Python 3.12 wheels
+kivy==2.3.0                  # first release with Python 3.12 wheels
 kivymd==1.2.0                # requires kivy>=2.2
 
 # ── PDF ───────────────────────────────────────────────────────
-pymupdf>=1.24.0              # tested on 1.27.2; import as fitz
+pymupdf==1.27.2.3            # import as fitz
 
 # ── Images / arrays ───────────────────────────────────────────
-pillow>=10.0.0               # tested on 12.2.0 in _venv
-numpy>=1.26.0                # 1.26+ required for Python 3.12; tested on 2.4.6
+pillow==12.2.0
+numpy==2.4.6                 # 2.x required for Python 3.12
 
 # ── Embeddings ────────────────────────────────────────────────
-sentence-transformers>=3.0.0 # pulls transformers, torch, huggingface_hub
+sentence-transformers==5.5.1
+transformers==5.9.0
+einops                       # required by jina-embeddings-v2 remote code
+
+# NOTE: torch is deliberately NOT pinned here.
+#   - CPU-only install: sentence-transformers pulls a CPU torch automatically.
+#   - GPU install:      use requirements-gpu.txt, which pins the CUDA build.
+# Pinning a bare `torch` here is what caused torch 2.12.0+cpu to be installed,
+# making torch.cuda.is_available() False and forcing all embedding onto CPU.
 
 # ── Vector search ─────────────────────────────────────────────
-faiss-cpu>=1.7.4             # tested on 1.14.2; GPU path: faiss-gpu
-# faiss-gpu>=1.8.0           # uncomment for CUDA vector search
-
-# ── PyTorch (for GPU embedding) ───────────────────────────────
-# Already in _venv as torch 2.12.0 with CUDA support.
-# To install fresh:
-#   CPU:  pip install torch
-#   CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu121
-torch>=2.0.0
+faiss-cpu==1.14.2            # faiss-gpu has no Windows wheels; CPU HNSW is the path
 
 # ── Local LLM ─────────────────────────────────────────────────
-# RTX 4050 — CUDA 12.1 pre-built wheel:
-#   pip install llama-cpp-python \
-#       --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
-# CPU fallback:
-#   pip install llama-cpp-python
-llama-cpp-python>=0.3.2
+# CPU build. For GPU offload (n_gpu_layers) see requirements-gpu.txt —
+# the PyPI wheel reports llama_supports_gpu_offload() == False.
+llama-cpp-python==0.3.23
 
 # ── OCR ───────────────────────────────────────────────────────
-pytesseract>=0.3.10          # tested 0.3.13
+pytesseract==0.3.13
+# onnxruntime-gpu was installed but undeclared for a long time; core/gpu_ocr.py
+# imports onnxruntime directly. Declared now so the venv is reproducible.
+onnxruntime-gpu==1.26.0
 
 # ── Web API ───────────────────────────────────────────────────
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0    # tested 0.48.0
-pydantic>=2.0.0
-httpx>=0.25.0
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+httpx==0.28.1
 
 # ── CLI / logging ─────────────────────────────────────────────
-click>=8.1.7                 # tested 8.4.1
-rich>=13.0.0
-tqdm>=4.65.0                 # tested 4.67.3
-loguru>=0.7.0                # tested 0.7.3
+click==8.4.1
+rich==15.0.0
+tqdm==4.67.3
+loguru==0.7.3
 
 # ── Networking / utilities ────────────────────────────────────
-requests>=2.31.0             # tested 2.34.2
-python-dotenv>=1.0.0         # tested 1.2.2
+requests==2.34.2
+python-dotenv==1.2.2
 
 # ── Windows ───────────────────────────────────────────────────
-pywin32>=306                 # tested 311 (already in _venv)
-# pypiwin32>=223             # also already in _venv
+pywin32==311
 
 # ── Android packaging (Linux only) ───────────────────────────
 # buildozer>=1.5.0

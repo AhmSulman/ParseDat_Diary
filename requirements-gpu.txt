@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────
+#  MAAN — GPU overlay  (NVIDIA CUDA)
+#  Target: RTX 4050 Laptop, 6 GB VRAM, driver 610.88 / CUDA UMD 13.3
+#
+#  Install AFTER requirements.txt:
+#      _venv\Scripts\python.exe -m pip install -r requirements-gpu.txt
+#
+#  Then VERIFY — an install that "succeeds" but leaves a CPU build in place
+#  is the exact failure this file exists to prevent:
+#      _venv\Scripts\python.exe -c "import torch; assert torch.cuda.is_available()"
+#      _venv\Scripts\python.exe -c "import llama_cpp; assert llama_cpp.llama_supports_gpu_offload()"
+#
+#  NOTE: use `python -m pip`, not `pip.exe` — the shim in this venv exits 1
+#  with no output.
+# ─────────────────────────────────────────────────────────────
+
+# ── PyTorch with CUDA ─────────────────────────────────────────
+# cu126 chosen over cu130 deliberately:
+#   - keeps torch at exactly 2.12.0, so only the build changes (CPU -> CUDA)
+#   - CUDA 12.6 matches what onnxruntime-gpu 1.26 expects, avoiding a clash
+#     between two libraries each loading their own CUDA runtime in-process
+#   - NVIDIA drivers are backward compatible, so a 13.3 driver runs 12.6 fine
+# cu130 wheels also exist for 2.12.0 if a future need arises.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.12.0+cu126
+
+
+# ── llama-cpp-python with CUDA offload ───────────────────────
+# NOT pip-installable from PyPI: those wheels are CPU-only, which is why
+# config LLM_GPU_LAYERS=35 was silently ignored and Mistral-7B ran entirely
+# on CPU.
+#
+# Option A — prebuilt wheel index (try first):
+#   python -m pip install llama-cpp-python==0.3.23 --force-reinstall --no-cache-dir \
+#     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+#
+# Option B — build from source (needs CUDA Toolkit + MSVC Build Tools):
+#   set CMAKE_ARGS=-DGGML_CUDA=on
+#   python -m pip install llama-cpp-python==0.3.23 --force-reinstall --no-cache-dir
+#
+# If neither works, reinstall the CPU build and set LLM_GPU_LAYERS = 0 in
+# config/config.py so the config stops claiming GPU offload it does not have.
+# Everything else in MAAN works without it; generation is just slower.
+
+
+# ── VRAM budget (why the embedder is not always on GPU) ──────
+# Mistral-7B Q4_K_M @ 35 layers   ~3.6-4.0 GB
+# KV cache @ 8192 ctx             ~1.0 GB
+#                                 ---------
+#                                 ~5.0 GB of 6141 MiB
+# So the embedder runs on CUDA during INGEST (no LLM loaded) and on CPU
+# during CHAT (a single short query costs ~15 ms). See brain/embedder.py.
