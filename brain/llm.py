@@ -121,26 +121,96 @@ class LocalLLM:
         except Exception as e:
             yield f"⚠️  Generation error: {e}"
 
-    def build_rag_prompt(self, question: str, context_chunks: list[dict]) -> str:
+    def build_rag_prompt(self, question: str, context_chunks: list[dict],
+                         library_titles: list[str] | None = None,
+                         char_budget: int | None = None) -> str:
         """
-        Build a RAG prompt combining retrieved chunks with the user's question.
-        Context per chunk capped at 1200 chars (covers most paragraphs fully).
+        Build the RAG prompt: grounded library header, numbered sources with page
+        spans, and an instruction to cite inline.
+
+        Two changes that matter:
+
+        1. NO PER-CHUNK TRUNCATION. The old builder cut every chunk at 600
+           chars. That was a no-op at the old 400-char chunk size and would now
+           silently discard half of every 1200-char chunk. Budget is enforced
+           across the whole context instead, so nothing is cut mid-passage
+           without the caller knowing.
+
+        2. THE LIBRARY COUNT IS STATED, NOT INFERRED. "How many books do you
+           have?" was previously unanswerable — nothing ever told the model. It
+           guessed. ~200 tokens of header removes an entire class of
+           hallucination.
         """
-        context_text = ""
+        budget = char_budget or Config().CONTEXT_CHAR_BUDGET
+
+        header = ""
+        if library_titles:
+            listed = "\n".join(f"  - {t}" for t in library_titles)
+            header = (
+                f"LIBRARY: {len(library_titles)} book(s) are indexed and "
+                f"searchable:\n{listed}\n\n"
+                "That list is complete. If asked how many books there are, or "
+                "which ones, answer from it exactly and do not guess.\n\n"
+            )
+
+        parts, used = [], 0
         for i, chunk in enumerate(context_chunks, 1):
             source = chunk.get("source", "unknown")
-            # Chunks are ~400 chars; pass full text for maximum precision
-            text = chunk.get("chunk", "")[:600]
-            context_text += f"\n[Source {i}: {source}]\n{text}\n"
+            text = chunk.get("chunk", "")
+            ps, pe = chunk.get("page_start"), chunk.get("page_end")
+            if ps and pe and ps != pe:
+                loc = f"{source}, p.{ps}-{pe}"
+            elif ps:
+                loc = f"{source}, p.{ps}"
+            else:
+                loc = source
 
-        prompt = f"""[INST] You are MAAN, an AI assistant that answers questions based on the provided book excerpts.
-Answer clearly and completely using ONLY the context below. Do not truncate your answer.
-If the answer is not in the context, say so honestly.
+            block = f"\n[{i}] {loc}\n{text}\n"
+            if used + len(block) > budget and parts:
+                break
+            parts.append(block)
+            used += len(block)
 
-CONTEXT:
+        context_text = "".join(parts)
+
+        return f"""[INST] You are MAAN. You answer questions using only the book excerpts provided below.
+
+{header}RULES:
+- Use ONLY the numbered excerpts below. Do not add outside knowledge.
+- After EVERY claim, cite the excerpt it came from as [1], [2], etc.
+- If a claim draws on several excerpts, cite them all, like [2][5].
+- Cite only numbers that appear below. Never invent a citation.
+- If the excerpts do not answer the question, say so plainly instead of
+  guessing. An honest "not in these books" is the correct answer.
+- Answer fully. Do not truncate.
+
+EXCERPTS:
 {context_text}
 
 QUESTION: {question} [/INST]
 ANSWER: """
 
-        return prompt
+    @staticmethod
+    def validate_citations(answer: str, n_sources: int) -> dict:
+        """
+        Check the [N] markers in an answer against the sources actually supplied.
+
+        A citation outside 1..n_sources is a mechanically detectable
+        hallucination: the model referenced material it was never given. That is
+        one of the few hallucination classes that can be caught without a human
+        reading the source, so it is worth catching every time.
+
+        Returns: {cited, invalid, uncited, n_sources}
+        """
+        import re
+        found = [int(x) for x in re.findall(r"\[(\d{1,3})\]", answer or "")]
+        cited = sorted(set(n for n in found if 1 <= n <= n_sources))
+        invalid = sorted(set(n for n in found if not (1 <= n <= n_sources)))
+        # Substantive answer with no citations at all is also suspect.
+        uncited = bool(answer and len(answer.strip()) > 200 and not found)
+        return {
+            "cited": cited,
+            "invalid": invalid,
+            "uncited": uncited,
+            "n_sources": n_sources,
+        }
