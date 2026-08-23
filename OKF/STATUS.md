@@ -52,10 +52,24 @@ real fix for the HTTP 408 push timeouts.
 - **The index is currently EMPTY.** The old 384-dim index was deleted (a 768-dim
   embedder invalidates it). Run `reindex`, then `ingest`. 12 of 13 books rebuild
   from cached text; only `Alfred's Essentials` needs OCR.
-- **GPU is not working yet.** `torch` was still installing as of this writing,
-  and `llama-cpp-python` reports `llama_supports_gpu_offload() == False`, so
-  Mistral runs entirely on CPU and `LLM_GPU_LAYERS=35` is ignored. See
-  `requirements-gpu.txt`.
+- **GPU is half working.**
+  - **torch: WORKING.** `2.12.0+cu126`, `cuda.is_available()` True, RTX 4050
+    detected, verified with real compute — 8.1x faster than CPU on a matmul
+    benchmark, finite results. Embedding and reindex now use CUDA.
+  - **llama.cpp: NOT working.** `llama_supports_gpu_offload()` is False on
+    0.3.23, so Mistral still runs entirely on CPU and `LLM_GPU_LAYERS=35` is
+    silently ignored.
+
+    Prebuilt CUDA wheels for cp312/Windows stop at **0.3.4** (cu121–cu124);
+    there is nothing for 0.3.23. Two paths: downgrade to the 0.3.4 cu124 wheel
+    (it has every API `llm.py` uses, and the Mistral-v0.2 GGUF predates it), or
+    build from source — CUDA Toolkit **v13.2** and **Visual Studio 18** are both
+    installed, but 0.3.23's build scripts predate CUDA 13 and may pass flags
+    `nvcc` 13.2 rejects.
+
+    CUDA note: drivers are backward compatible, so a cu124 wheel runs fine on
+    this 13.3 driver. The risk is the build toolchain, not the GPU (RTX 4050 is
+    compute 8.9, fully supported on 13.x).
 - **Jina embedder is untested against transformers 5.9.** It needs
   `trust_remote_code`, and that code targets transformers 4.x. The loader
   smoke-tests it and falls back to `bge-base-en-v1.5` (also 768-dim), but which
