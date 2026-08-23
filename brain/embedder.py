@@ -120,9 +120,16 @@ class Embedder:
         _device = _detect_device(self.requested_device)
         cfg = self.cfg
 
+        # trust_remote_code is OFF by default and must stay that way unless the
+        # offline-first guarantee is being deliberately traded away: it
+        # downloads and executes Python from the hub at load time, so the app
+        # stops working unplugged even when the weights are cached locally.
+        trust = bool(getattr(cfg, "EMBED_TRUST_REMOTE_CODE", False))
+        extra = {"trust_remote_code": True} if trust else {}
+
         for name, kwargs in (
-            (cfg.EMBED_MODEL, {"trust_remote_code": True}),
-            (cfg.EMBED_FALLBACK, {}),
+            (cfg.EMBED_MODEL, extra),
+            (cfg.EMBED_FALLBACK, extra),
         ):
             try:
                 log.info(f"Loading embedder: {name} on {_device}")

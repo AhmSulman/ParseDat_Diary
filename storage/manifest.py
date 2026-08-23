@@ -55,8 +55,12 @@ def file_sha256(path: str, _chunk: int = 1 << 20) -> str:
 class Manifest:
     """Book-level record of the indexed library. Total on every operation."""
 
-    def __init__(self, path: str = MANIFEST_FILE):
-        self.path = path
+    def __init__(self, path: str | None = None):
+        # Resolved at call time, not bound as a default argument. A default of
+        # `path=MANIFEST_FILE` captures the value at import, which makes the
+        # location impossible to redirect afterwards — tests pointing at a temp
+        # directory silently wrote to the real cache instead.
+        self.path = path or MANIFEST_FILE
         self.books: dict[str, dict] = {}
         self.settings: dict = {}
         self.load()

@@ -52,12 +52,27 @@ class Config:
     CHUNK_OVERLAP: int     = 200       # 16.7% -- must stay < CHUNK_SIZE // 2
 
     # Search / Embeddings
-    # jina-embeddings-v2-base-en: Apache 2.0, 768-dim, 8192-token context, 137M
-    # params. The long context is what makes 1200-char chunks embeddable whole;
-    # all-MiniLM-L6-v2 truncated at 256 tokens. Falls back to bge-base-en-v1.5
-    # if the trust_remote_code path breaks against transformers 5.x.
-    EMBED_MODEL: str       = "jinaai/jina-embeddings-v2-base-en"
-    EMBED_FALLBACK: str    = "BAAI/bge-base-en-v1.5"
+    #
+    # BAAI/bge-base-en-v1.5: MIT, 768-dim, 512-token, 109M params.
+    #
+    # Chosen for OFFLINE-FIRST, which is the whole point of MAAN. bge is plain
+    # BERT: sentence-transformers loads it natively, so once the weights are
+    # cached it works with the network unplugged, permanently.
+    #
+    # Both Jina models were tried and rejected. Beyond failing against
+    # transformers 5.9 (v2: `No module named 'transformers.onnx'`; v3:
+    # `XLMRobertaLoRA has no attribute all_tied_weights_keys`), they require
+    # trust_remote_code — which downloads and EXECUTES Python from HuggingFace
+    # at load time. Observed directly: with 5.48 GB of v3 weights already on
+    # disk, it still fetched mlp.py, stochastic_depth.py and rotary.py from the
+    # hub. That is a network dependency on every cold start and remote code
+    # execution besides — incompatible with "no cloud, runs entirely on your
+    # machine".
+    #
+    # So: never enable trust_remote_code here without accepting both costs.
+    EMBED_MODEL: str       = "BAAI/bge-base-en-v1.5"
+    EMBED_FALLBACK: str    = "sentence-transformers/all-mpnet-base-v2"  # 768-d, no remote code
+    EMBED_TRUST_REMOTE_CODE: bool = False
     EMBED_DIM: int         = 768       # was hardcoded as DIM=384 in retriever.py
 
     # Retrieval
