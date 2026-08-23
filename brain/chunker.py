@@ -1,82 +1,169 @@
 """
 Smart Text Chunker
 ==================
-Splits long PDF text into smaller pieces (chunks) for better search.
+Splits book text into overlapping, sentence-aligned chunks with enough metadata
+to cite and to reassemble.
 
-WHY? Because:
-  - Embedding a 200-page book as ONE vector loses detail
-  - Embedding sentence by sentence = too granular, loses context
-  - Chunking into ~500 word blocks = sweet spot for RAG
+WHY THE METADATA MATTERS
+------------------------
+The old pipeline attached only {"source": name} to every chunk. That made three
+things impossible:
 
-Think of it like cutting a book into chapters, then paragraphs.
-Each chunk is independently searchable.
+  - citing a page, so no answer could be checked against the book
+  - finding a chunk's neighbours, so a hit was always an isolated fragment
+  - knowing how many chunks a book has, so nothing could verify completeness
 
-Uses sliding window overlap so context isn't lost at chunk boundaries.
+Each chunk now carries `chunk_id`, `n_chunks`, exact `char_start`/`char_end`
+and the `page_start`/`page_end` it covers.
+
+OFFSETS ARE EXACT, NOT APPROXIMATE
+----------------------------------
+`char_start`/`char_end` describe the STORED text after stripping, not the raw
+slice. The retriever de-overlaps adjacent chunks arithmetically:
+
+    drop   = prev.char_end - cur.char_start
+    merged = prev.text + cur.text[drop:]
+
+which is only correct if the offsets match the stored strings character for
+character. Recording pre-strip offsets would silently corrupt every merge.
 """
 
+import re
+
 from config.config import Config
+from core.normalize import page_offsets
+
+# Break points, best first: paragraph, line, then sentence enders.
+_SEPARATORS = ["\n\n", "\n", ". ", "! ", "? "]
+
+_PAGE_MARKER = re.compile(r"-{2,}\s*Page\s+\d+[^\n]*?-{2,}")
 
 
 class Chunker:
-    def __init__(self):
+    def __init__(self, chunk_size: int | None = None, overlap: int | None = None):
         cfg = Config()
-        self.chunk_size = cfg.CHUNK_SIZE          # chars per chunk
-        self.overlap = cfg.CHUNK_OVERLAP           # overlap between chunks
+        self.chunk_size = chunk_size if chunk_size is not None else cfg.CHUNK_SIZE
+        self.overlap = overlap if overlap is not None else cfg.CHUNK_OVERLAP
 
-    def chunk(self, text: str) -> list[str]:
+        # A stalled loop is the failure mode here: if overlap reaches half the
+        # chunk size, `start` can stop advancing and chunk() never terminates.
+        # Clamp rather than trust the config.
+        max_overlap = self.chunk_size // 2 - 1
+        if self.overlap > max_overlap:
+            self.overlap = max(0, max_overlap)
+
+    # ── internal ──────────────────────────────────────────────────────────────
+    def _spans(self, text: str) -> list[tuple[int, int]]:
         """
-        Split text into overlapping chunks.
+        Chunk boundaries as (start, end) offsets into `text`.
 
-        Args:
-            text: Full document text
-
-        Returns:
-            List of chunk strings
+        Offsets are computed on the text as given, then tightened to the
+        stripped content in `chunk_with_meta` so stored text and offsets agree.
         """
-        if not text or not text.strip():
-            return []
-
-        text = text.strip()
-
-        # If text is short enough, return as single chunk
-        if len(text) <= self.chunk_size:
-            return [text]
-
-        chunks = []
+        spans: list[tuple[int, int]] = []
+        n = len(text)
         start = 0
 
-        while start < len(text):
-            end = start + self.chunk_size
+        while start < n:
+            end = min(start + self.chunk_size, n)
 
-            # Try to end at a sentence boundary (. or \n)
-            if end < len(text):
-                # Search backwards for a good break point
-                for sep in ["\n\n", "\n", ". ", "! ", "? "]:
-                    pos = text.rfind(sep, start + self.chunk_size // 2, end)
+            # Prefer a natural boundary in the second half of the window, so a
+            # chunk ends at a paragraph or sentence rather than mid-word.
+            if end < n:
+                floor = start + self.chunk_size // 2
+                for sep in _SEPARATORS:
+                    pos = text.rfind(sep, floor, end)
                     if pos != -1:
                         end = pos + len(sep)
                         break
 
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
+            spans.append((start, end))
 
-            # Move forward with overlap (so we don't lose context at edges)
-            start = end - self.overlap
-            if start >= len(text):
+            if end >= n:
                 break
 
-        return chunks
+            nxt = end - self.overlap
+            # Guarantee forward progress even if a pathological boundary lands
+            # inside the overlap window.
+            start = nxt if nxt > start else start + 1
 
-    def chunk_with_meta(self, text: str, source: str) -> list[dict]:
-        """
-        Chunk text and attach metadata to each chunk.
+        return spans
 
-        Returns:
-            List of dicts: [{"text": "...", "source": "file.pdf", "chunk_id": 0}, ...]
+    # ── public API ────────────────────────────────────────────────────────────
+    def chunk(self, text: str) -> list[str]:
+        """Split text into overlapping chunks. Returns the chunk strings only."""
+        if not text or not text.strip():
+            return []
+        out = []
+        for s, e in self._spans(text):
+            piece = text[s:e].strip()
+            if piece:
+                out.append(piece)
+        return out
+
+    def chunk_with_meta(self, text: str, source: str, book_id: int = 0) -> list[dict]:
         """
-        chunks = self.chunk(text)
-        return [
-            {"text": c, "source": source, "chunk_id": i}
-            for i, c in enumerate(chunks)
-        ]
+        Chunk text and attach the metadata the retriever and prompt builder need.
+
+        Returns a list of dicts:
+            text, source, book_id, chunk_id, n_chunks,
+            char_start, char_end, page_start, page_end
+
+        `chunk_id` is contiguous 0..n_chunks-1 for the source, which is what
+        makes neighbour lookup a simple +/-1.
+        """
+        if not text or not text.strip():
+            return []
+
+        pages = page_offsets(text)
+        page_pos = [p[0] for p in pages]
+        page_num = [p[1] for p in pages]
+
+        def page_at(offset: int) -> int | None:
+            """Page whose marker most recently preceded `offset`."""
+            if not page_pos:
+                return None
+            lo, hi = 0, len(page_pos) - 1
+            if offset < page_pos[0]:
+                return None
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if page_pos[mid] <= offset:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return page_num[lo]
+
+        rows: list[dict] = []
+        for s, e in self._spans(text):
+            raw = text[s:e]
+            stripped = raw.strip()
+            if not stripped:
+                continue
+
+            # Tighten offsets onto the stored text: this is what keeps the
+            # retriever's de-overlap arithmetic exact.
+            lead = len(raw) - len(raw.lstrip())
+            c_start = s + lead
+            c_end = c_start + len(stripped)
+
+            rows.append({
+                "text": stripped,
+                "source": source,
+                "book_id": book_id,
+                "char_start": c_start,
+                "char_end": c_end,
+                "page_start": page_at(c_start),
+                "page_end": page_at(max(c_start, c_end - 1)),
+            })
+
+        total = len(rows)
+        for i, r in enumerate(rows):
+            r["chunk_id"] = i
+            r["n_chunks"] = total
+        return rows
+
+    @staticmethod
+    def strip_page_markers(text: str) -> str:
+        """Remove `--- Page N ---` lines. For display, never before chunking."""
+        return _PAGE_MARKER.sub("", text)

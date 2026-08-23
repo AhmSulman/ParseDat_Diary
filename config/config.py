@@ -43,13 +43,29 @@ class Config:
     # Async Pipeline
     ASYNC_WORKERS: int     = 4
 
-    # Text Chunking -- smaller = more precise retrieval, better forward/back tracing
-    CHUNK_SIZE: int        = 400       # ~100 words per chunk
-    CHUNK_OVERLAP: int     = 80        # 20% overlap keeps cross-boundary sentences
+    # Text Chunking
+    # 400 chars x top_k 12 filled only ~1.2K of the 8192-token window with 12
+    # disconnected fragments, most cut mid-sentence. At 1200/200 the corpus
+    # (8,303,639 chars) yields ~8,300 chunks on a 1000-char stride, down from
+    # ~25,900, and each chunk holds a whole thought.
+    CHUNK_SIZE: int        = 1200      # ~300 words per chunk
+    CHUNK_OVERLAP: int     = 200       # 16.7% -- must stay < CHUNK_SIZE // 2
 
     # Search / Embeddings
-    EMBED_MODEL: str       = "all-MiniLM-L6-v2"
-    SEARCH_TOP_K: int      = 12        # Retrieve more small chunks = same text coverage
+    # jina-embeddings-v2-base-en: Apache 2.0, 768-dim, 8192-token context, 137M
+    # params. The long context is what makes 1200-char chunks embeddable whole;
+    # all-MiniLM-L6-v2 truncated at 256 tokens. Falls back to bge-base-en-v1.5
+    # if the trust_remote_code path breaks against transformers 5.x.
+    EMBED_MODEL: str       = "jinaai/jina-embeddings-v2-base-en"
+    EMBED_FALLBACK: str    = "BAAI/bge-base-en-v1.5"
+    EMBED_DIM: int         = 768       # was hardcoded as DIM=384 in retriever.py
+
+    # Retrieval
+    # Budget: 6 windows x ~3200 chars = ~19,200 chars = ~4,800 tokens, leaving
+    # ~3,392 of the 8192-token window for the prompt and the answer.
+    SEARCH_TOP_K: int      = 6
+    NEIGHBOR_RADIUS: int   = 1         # also pull chunk_id +/- 1 from same book
+    CONTEXT_CHAR_BUDGET: int = 20000   # hard cap on assembled context
 
     # Web Server
     SERVER_HOST: str       = "0.0.0.0"
