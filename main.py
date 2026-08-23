@@ -165,6 +165,8 @@ def main():
     server_p.add_argument("--host", default="0.0.0.0")
     server_p.add_argument("--port", type=int, default=8000)
     server_p.add_argument("--model", type=str, default=None)
+    server_p.add_argument("--allow-admin", action="store_true",
+                          help="Enable clean/sync endpoints (localhost only)")
 
     # ── search ────────────────────────────────────────────────────────────────
     search_p = subparsers.add_parser("search", help="Semantic search without chat")
@@ -228,7 +230,8 @@ def main():
 
     elif args.command == "server":
         from chat.server import run_server
-        run_server(host=args.host, port=args.port, model_path=args.model)
+        run_server(host=args.host, port=args.port, model_path=args.model,
+                   allow_admin=args.allow_admin)
 
     elif args.command == "search":
         from brain.retriever import Retriever
