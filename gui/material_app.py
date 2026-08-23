@@ -199,9 +199,15 @@ class MaanMaterialRoot(MDBoxLayout):
                 rag.retriever.load()
             except Exception as ex:
                 log.warning(f"Index reload: {ex}")
-            n = rag.retriever.doc_count
+            # Report books AND chunks. doc_count is a chunk total despite the
+            # name, so the old message never told the user how many books the
+            # AI could actually see.
+            chunks = rag.retriever.chunk_count
+            books = rag.retriever.book_count
             if getattr(self._app, "rag_ok", False):
-                self.rag_status_hint = f"Ready — {n:,} indexed chunk(s). Ask away."
+                self.rag_status_hint = (
+                    f"Ready — {books} book(s), {chunks:,} chunk(s). Ask away."
+                )
 
         Clock.schedule_once(lambda *_: setattr(self, "ingest_progress_value", 0), 2.0)
         Clock.schedule_once(lambda *_: setattr(self, "ingest_status", ""), 2.8)
@@ -243,11 +249,30 @@ class MaanMaterialRoot(MDBoxLayout):
             self._pdf_menu.dismiss()
 
         def stats(*_):
-            cfg = Config()
-            base = cfg.INPUT_DIR
-            pdfs = [f for f in os.listdir(base) if f.lower().endswith(".pdf")]
-            total_mb = sum(os.path.getsize(os.path.join(base, f)) for f in pdfs) / (1024 * 1024)
-            self._toast(f"{len(pdfs)} PDFs · ~{total_mb:.1f} MiB")
+            # Same LibraryService the CLI and dashboard use, so this can never
+            # report different numbers than `main.py doctor`. It also surfaces
+            # drift -- holes and orphans -- which a plain file count cannot see.
+            try:
+                from storage.library import LibraryService
+                rep = LibraryService().report()
+                c = rep["counts"]
+                if rep["healthy"]:
+                    msg = (f"{c['books_indexed']} books · "
+                           f"{c['chunks_indexed']:,} chunks · healthy")
+                else:
+                    bits = []
+                    if rep["holes"]:
+                        bits.append(f"{len(rep['holes'])} not indexed")
+                    if any(rep["orphans"].values()):
+                        bits.append("orphans")
+                    if rep["pending"]:
+                        bits.append(f"{len(rep['pending'])} pending")
+                    msg = (f"{c['books_indexed']}/{c['pdfs_on_disk']} indexed · "
+                           + ", ".join(bits))
+            except Exception as ex:
+                log.warning(f"Library stats failed: {ex}")
+                msg = "Could not read library state"
+            self._toast(msg)
             if self._pdf_menu:
                 self._pdf_menu.dismiss()
 
@@ -758,8 +783,11 @@ class MaanMaterialApp(MDApp):
             if self._root is None:
                 return
             if ok:
-                n = rag.retriever.doc_count
-                self._root.rag_status_hint = f"Ready — {n:,} indexed chunk(s). Ask away."
+                chunks = rag.retriever.chunk_count
+                books = rag.retriever.book_count
+                self._root.rag_status_hint = (
+                    f"Ready — {books} book(s), {chunks:,} chunk(s). Ask away."
+                )
                 self._root._toast("AI ready.")
             else:
                 self._root.rag_status_hint = (
