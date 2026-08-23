@@ -191,9 +191,15 @@ def strip_thinking(text: str) -> str:
     is no closing tag and everything after <think> is discarded.
     """
     import re
-    if "<think>" not in text:
-        return text
+    # Paired tags first.
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+
+    # R1 usually emits NO opening tag when driven from /completion with a raw
+    # prompt — the opener comes from the chat template we are not using. So a
+    # bare </think> means everything before it was reasoning.
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+
     if "<think>" in text:                      # truncated mid-thought
         text = text.split("<think>", 1)[0]
     return text.strip()

@@ -113,40 +113,53 @@ class RAGPipeline:
         # working-out, not the answer: it must not be shown as prose, and it
         # must not be scanned for citations — a [3] mentioned while thinking is
         # not a claim. Suppress it live, keep it out of the validated text.
+        # R1 opens its reasoning WITHOUT a <think> tag — the opener normally
+        # comes from the chat template, and we post a raw prompt to /completion.
+        # So the stream is: reasoning, then a bare </think>, then the answer.
+        # Waiting for an opening tag suppresses nothing and dumps the entire
+        # monologue, which is what happened on the first real run.
+        #
+        # Treat the stream as possibly-reasoning from the first token: hold it
+        # back, and if </think> arrives, discard everything before it. If enough
+        # text accumulates without one, this is not a reasoning model — release
+        # what was held and stream normally from then on.
         collected: list[str] = []
         buf = ""
-        thinking = False
+        state = "unknown"          # unknown -> thinking-confirmed | plain
         announced = False
+        PROBE_LIMIT = 6000         # chars held before concluding "no reasoning"
 
         for token in self.llm.generate(prompt, stream=stream):
             collected.append(token)
-            buf += token
 
-            while buf:
-                if not thinking:
-                    i = buf.find("<think>")
-                    if i == -1:
-                        # Hold back a possible partial "<think>" split across tokens.
-                        keep = 7
-                        if len(buf) > keep:
-                            yield buf[:-keep]
-                            buf = buf[-keep:]
-                        break
-                    if i:
-                        yield buf[:i]
-                    buf = buf[i + 7:]
-                    thinking = True
-                    if not announced:
-                        announced = True
-                        yield "[thinking…]"
-                else:
-                    j = buf.find("</think>")
-                    if j == -1:
-                        buf = buf[-8:]          # keep a possible split close tag
-                        break
-                    buf = buf[j + 8:]
-                    thinking = False
-        if buf and not thinking:
+            if state == "plain":
+                yield token
+                continue
+
+            buf += token
+            end = buf.find("</think>")
+            if end != -1:
+                buf = buf[end + 8:]        # drop the reasoning entirely
+                state = "plain"
+                if buf:
+                    yield buf.lstrip()
+                    buf = ""
+                continue
+
+            if not announced and len(buf) > 40:
+                announced = True
+                yield "[reasoning…]"
+
+            if len(buf) > PROBE_LIMIT:     # no reasoning block; release it
+                state = "plain"
+                yield buf
+                buf = ""
+
+        if buf and state != "plain":
+            # Ended mid-reasoning: nothing worth showing, but say so rather
+            # than returning an empty answer.
+            yield "\n[answer was cut off during reasoning — raise -c or n_predict]"
+        elif buf:
             yield buf
 
         from brain.llm_server import strip_thinking
