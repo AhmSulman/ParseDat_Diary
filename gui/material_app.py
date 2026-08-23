@@ -40,10 +40,14 @@ if not _IS_ANDROID:
     Window.size = (1280, 860)
 
 
+# (model, dim, label). The DIMENSION matters: the FAISS index stores vectors of
+# one fixed width, so switching to a model of a different dim makes every stored
+# vector unusable until a full reindex. The old list offered two 384-dim models
+# against a 768-dim index with no warning.
 EMBEDDER_OPTIONS = [
-    ("all-MiniLM-L6-v2",        "MiniLM L6  ·  22 MB  ·  Fast (default)"),
-    ("paraphrase-MiniLM-L6-v2", "Paraphrase MiniLM  ·  22 MB  ·  Balanced"),
-    ("all-mpnet-base-v2",        "MPNet Base  ·  420 MB  ·  Best quality"),
+    ("BAAI/bge-base-en-v1.5", 768, "BGE Base  ·  420 MB  ·  current, offline"),
+    ("sentence-transformers/all-mpnet-base-v2", 768, "MPNet Base  ·  420 MB  ·  needs download"),
+    ("sentence-transformers/all-MiniLM-L6-v2", 384, "MiniLM L6  ·  22 MB  ·  fast, FULL REINDEX"),
 ]
 
 PRESET_MODELS = [
@@ -615,7 +619,7 @@ class MaanMaterialRoot(MDBoxLayout):
         rag = getattr(app, "rag", None) if app else None
         if rag is not None:
             em = getattr(rag.retriever.embedder, "model_name", None) or em
-        label = next((l for n, l in EMBEDDER_OPTIONS if n == em), em)
+        label = next((l for n, _d, l in EMBEDDER_OPTIONS if n == em), em)
         built = ""
         try:
             from storage.manifest import Manifest
@@ -720,16 +724,17 @@ class MaanMaterialRoot(MDBoxLayout):
 
     def show_embedder_menu(self, btn):
         """Dropdown: fast local embedder options (no API required)."""
-        import brain.embedder as emb_mod
+        cur = Config().EMBED_MODEL
 
         items = []
-        for name, label in EMBEDDER_OPTIONS:
-            tag = "●" if name == emb_mod.MODEL_NAME else "○"
+        for name, dim, label in EMBEDDER_OPTIONS:
+            tag = "●" if name == cur else "○"
+            warn = "" if dim == Config().EMBED_DIM else f"  ⚠ {dim}-dim"
             items.append({
-                "text": f"{tag} {label}",
-                "on_release": lambda *_, n=name, l=label: (
+                "text": f"{tag} {label}{warn}",
+                "on_release": lambda *_, n=name, d=dim, l=label: (
                     self._pdf_menu.dismiss() if self._pdf_menu else None,
-                    self._switch_embedder(n, l),
+                    self._switch_embedder(n, d, l),
                 ),
             })
         if self._pdf_menu:
@@ -738,12 +743,30 @@ class MaanMaterialRoot(MDBoxLayout):
         self._pdf_menu = MDDropdownMenu(caller=btn, items=items, width_mult=8, max_height=dp(280))
         self._pdf_menu.open()
 
-    def _switch_embedder(self, name: str, label: str):
+    def _switch_embedder(self, name: str, dim: int, label: str):
+        """
+        Switch the embedder. This INVALIDATES the index.
+
+        Vectors from two different models are not comparable, so the stored
+        index describes nothing the new model would produce. The retriever
+        refuses to search on a model mismatch rather than returning confident
+        nonsense, so the library stays unusable until a reindex. Say so plainly
+        instead of the old "re-ingest for it to take effect".
+        """
         import brain.embedder as emb_mod
-        emb_mod.MODEL_NAME = name
-        emb_mod._model = None          # force lazy reload next time
+
+        Config.EMBED_MODEL = name
+        Config.EMBED_DIM = dim
+        emb_mod._model = None           # force a lazy reload on next use
+        emb_mod._model_name = None
         self.active_embedder_label = label
-        self._toast(f"Embedder → {name}. Re-ingest for the new model to take effect.")
+
+        if dim != 768:
+            self._toast(f"{name}: {dim}-dim. Index is 768-dim — "
+                        f"search is DISABLED until you reindex.")
+        else:
+            self._toast(f"Embedder → {name}. Run reindex; search is disabled "
+                        f"until you do.")
 
     def _toast(self, text: str):
         try:
