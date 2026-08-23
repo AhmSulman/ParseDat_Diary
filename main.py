@@ -207,6 +207,13 @@ def main():
                            help="cuda or cpu (default: auto)")
 
     # ── gui ───────────────────────────────────────────────────────────────────
+    # ── console ───────────────────────────────────────────────────────────────
+    console_p = subparsers.add_parser(
+        "console", help="Interactive terminal: ask, tune, ingest, forget books"
+    )
+    console_p.add_argument("--model", type=str, default=None)
+    console_p.add_argument("--gpu-layers", type=int, default=None)
+
     gui_p = subparsers.add_parser("gui", help="Launch Material Design GUI")
     gui_p.add_argument("--model", type=str, default=None, help="Path to .gguf model")
     gui_p.add_argument("--gpu-layers", type=int, default=None, help="GPU layers for LLM")
@@ -270,6 +277,10 @@ def main():
                 print(f"      - {b}")
         if st["failed"]:
             print(f"  failed     : {st['failed']}")
+
+    elif args.command == "console":
+        from chat.console import Console
+        Console(model_path=args.model, gpu_layers=args.gpu_layers).run()
 
     elif args.command == "gui":
         from gui.material_app import run_gui

@@ -606,9 +606,27 @@ class MaanMaterialRoot(MDBoxLayout):
         cur = os.path.basename(cfg.LLM_MODEL_PATH)
         self.active_model_label = cur if os.path.exists(cfg.LLM_MODEL_PATH) else f"{cur}  (not downloaded)"
 
-        from brain.embedder import MODEL_NAME as EM
-        label = next((l for n, l in EMBEDDER_OPTIONS if n == EM), EM)
-        self.active_embedder_label = label
+        # The embedder that ACTUALLY loaded, falling back to the configured name
+        # when nothing has loaded yet. brain.embedder no longer exports a
+        # module-level MODEL_NAME: the configured model can fall back at load
+        # time, so a constant would have reported the wrong one.
+        em = cfg.EMBED_MODEL
+        app = getattr(self, "_app", None)
+        rag = getattr(app, "rag", None) if app else None
+        if rag is not None:
+            em = getattr(rag.retriever.embedder, "model_name", None) or em
+        label = next((l for n, l in EMBEDDER_OPTIONS if n == em), em)
+        built = ""
+        try:
+            from storage.manifest import Manifest
+            built_with = Manifest().settings.get("embed_model")
+            # Flag a mismatch here: both models are 768-dim, so nothing else
+            # would catch an index built with a different embedder.
+            if built_with and built_with != em:
+                built = f"  (index built with {built_with} — reindex)"
+        except Exception:
+            pass
+        self.active_embedder_label = label + built
 
         # List local .gguf files
         models_dir = cfg.MODELS_DIR
