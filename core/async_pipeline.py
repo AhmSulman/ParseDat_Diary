@@ -1,34 +1,51 @@
 """
-Async Pipeline — 10x Speed Engine
-===================================
-Instead of processing PDFs one-by-one (slow), this does everything
-in parallel using Python's asyncio + queues.
+Async Pipeline — PDF -> text -> quality gate -> chunks -> vectors
+==================================================================
+Stages run concurrently over asyncio queues:
 
-Think of it like a restaurant:
-  Old way: 1 chef cooks 1 meal, serves it, then cooks the next.
-  New way: Kitchen reads orders, cooks batch, serves batch — all at once.
+  [PDFs] -> read_queue -> [OCR workers] -> write_queue -> [writer]
+                                                            |
+                                                    embed_queue -> [embedder]
 
-FLOW:
-  [PDF files] → read_queue → [GPU OCR workers] → write_queue → [Disk writers]
-                                     ↓
-                              [Embedder queue] → [FAISS indexer]
+CHECKPOINT ORDERING IS LOAD-BEARING
+-----------------------------------
+The old pipeline marked a book "done" in the WRITER stage, as soon as its text
+hit disk — before it was ever embedded. `retriever.save()` then ran once, at the
+very end of run(). So any crash, or the user closing the window mid-run, threw
+away every vector from that session while the checkpoint had already recorded
+those books as complete.
+
+The next `ingest` skipped them. Permanently. That is how the library reached
+18 books marked done, 7 actually indexed, and 11 holes that no re-run could
+heal — the "it gets dumber and dumber" behaviour.
+
+Two rules now hold, and both matter:
+
+  1. `mark_done()` is called ONLY after the book's vectors are in the index —
+     in the embed stage, never the writer.
+  2. `retriever.save()` runs after EACH book, not once at the end, so a crash
+     costs at most the book in flight.
+
+A book that fails to embed is marked failed, not done, so the next run retries.
 """
 
 import asyncio
 import os
 import time
-from pathlib import Path
 
 import fitz  # PyMuPDF
 
-from core.gpu_ocr import GPUOCRBatch
-from core.extract_text import TextExtractor
-from storage.exporter import Exporter
-from storage.checkpoint import Checkpoint
 from brain.chunker import Chunker
 from brain.retriever import Retriever
 from config.config import Config
+from core.extract_text import TextExtractor
+from core.gpu_ocr import GPUOCRBatch
+from core.normalize import normalize
+from core.quality import score
 from logs.logger import log
+from storage.checkpoint import Checkpoint
+from storage.exporter import Exporter
+from storage.manifest import Manifest, file_sha256
 
 
 class AsyncPipeline:
@@ -40,151 +57,157 @@ class AsyncPipeline:
         self.checkpoint = Checkpoint()
         self.chunker = Chunker()
         self.retriever = Retriever()
+        self.manifest = Manifest()
 
-        # Async queues — the "conveyor belts" between workers
         self.read_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
         self.write_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
         self.embed_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
-        self._stats = {"done": 0, "skipped": 0, "failed": 0, "pages": 0}
+        self._stats = {
+            "done": 0, "skipped": 0, "failed": 0,
+            "pages": 0, "chunks": 0, "quarantined": 0,
+        }
 
     # ── Entry point ───────────────────────────────────────────────────────────
     async def run(self):
         pdfs = self._list_pdfs()
-
         if not pdfs:
-            log.warning(f"⚠️  No PDFs in '{self.cfg.INPUT_DIR}'. Drop some and retry.")
+            log.warning(f"No PDFs in '{self.cfg.INPUT_DIR}'. Drop some in and retry.")
             return
 
-        log.info(f"🚀 MAAN Pipeline starting — {len(pdfs)} PDFs, {self.cfg.ASYNC_WORKERS} workers")
+        log.info(f"MAAN pipeline: {len(pdfs)} PDFs, {self.cfg.ASYNC_WORKERS} workers")
         self.retriever.load()
 
-        t_start = time.perf_counter()
-
-        # Run all workers concurrently
-        await asyncio.gather(
-            self._reader_worker(pdfs),                             # 1 reader
-            *[self._ocr_worker(i) for i in range(self.cfg.ASYNC_WORKERS)],  # N OCR workers
-            self._writer_worker(),                                 # 1 writer
-            self._embed_worker(),                                  # 1 embedder
+        self.manifest.set_settings(
+            embed_model=self.cfg.EMBED_MODEL,
+            embed_dim=self.cfg.EMBED_DIM,
+            chunk_size=self.cfg.CHUNK_SIZE,
+            chunk_overlap=self.cfg.CHUNK_OVERLAP,
         )
 
+        t0 = time.perf_counter()
+        await asyncio.gather(
+            self._reader_worker(pdfs),
+            *[self._ocr_worker(i) for i in range(self.cfg.ASYNC_WORKERS)],
+            self._writer_worker(),
+            self._embed_worker(),
+        )
         self.retriever.save()
-        elapsed = time.perf_counter() - t_start
+        self.manifest.save()
 
+        elapsed = time.perf_counter() - t0
+        s = self._stats
         log.info("=" * 55)
-        log.info(f"✅ Done in {elapsed:.1f}s")
-        log.info(f"   Processed : {self._stats['done']}")
-        log.info(f"   Skipped   : {self._stats['skipped']}")
-        log.info(f"   Failed    : {self._stats['failed']}")
-        log.info(f"   Pages     : {self._stats['pages']}")
-        log.info(f"   Speed     : {self._stats['pages'] / max(elapsed, 1):.1f} pages/sec")
+        log.info(f"Done in {elapsed:.1f}s")
+        log.info(f"   Indexed     : {s['done']}")
+        log.info(f"   Skipped     : {s['skipped']}")
+        log.info(f"   Quarantined : {s['quarantined']}")
+        log.info(f"   Failed      : {s['failed']}")
+        log.info(f"   Pages       : {s['pages']}")
+        log.info(f"   Chunks      : {s['chunks']}")
+        log.info(f"   Library     : {self.manifest.book_count} books, "
+                 f"{self.manifest.chunk_count} chunks")
         log.info("=" * 55)
 
     # ── Stage 1: Reader ───────────────────────────────────────────────────────
     async def _reader_worker(self, pdfs: list):
-        """Reads PDFs from disk and pushes pages into the read_queue."""
+        seen_hashes = self.manifest.sha_index()
+
         for pdf_name in pdfs:
-            if self.checkpoint.is_done(pdf_name):
+            if self.checkpoint.is_done(pdf_name) and self.manifest.has(pdf_name):
+                # Only skip when BOTH agree. The checkpoint alone used to be
+                # enough, which is exactly how books became permanently skipped
+                # without ever reaching the index.
                 self._stats["skipped"] += 1
-                log.info(f"⏭️  Skip: {pdf_name}")
+                log.info(f"Skip (already indexed): {pdf_name}")
                 continue
 
             path = os.path.join(self.cfg.INPUT_DIR, pdf_name)
+
+            # Content-hash dedup: the same book re-added under a different
+            # filename must not be indexed twice.
             try:
-                # fitz.open is CPU-bound — run in thread so we don't block the event loop
+                sha = await asyncio.to_thread(file_sha256, path)
+                if sha in seen_hashes and seen_hashes[sha] != pdf_name:
+                    log.info(f"Skip (same content as '{seen_hashes[sha]}'): {pdf_name}")
+                    self._stats["skipped"] += 1
+                    continue
+            except OSError:
+                sha = ""
+
+            try:
                 doc = await asyncio.to_thread(fitz.open, path)
                 pages = list(doc)
-                log.info(f"📄 Queued: {pdf_name} ({len(pages)} pages)")
-
-                # Push the whole document as one job
-                await self.read_queue.put({"name": pdf_name, "pages": pages})
-
+                log.info(f"Queued: {pdf_name} ({len(pages)} pages)")
+                await self.read_queue.put(
+                    {"name": pdf_name, "pages": pages, "sha256": sha}
+                )
             except Exception as e:
-                log.error(f"❌ Read failed: {pdf_name} — {e}")
+                log.error(f"Read failed: {pdf_name} - {e}")
                 self.checkpoint.mark_failed(pdf_name)
                 self._stats["failed"] += 1
 
-        # Signal workers that reading is done (one sentinel per worker)
         for _ in range(self.cfg.ASYNC_WORKERS):
             await self.read_queue.put(None)
 
-    # ── Stage 2: OCR Workers (N parallel) ────────────────────────────────────
+    # ── Stage 2: OCR workers ─────────────────────────────────────────────────
     async def _ocr_worker(self, worker_id: int):
-        """
-        Pulls a PDF from read_queue, extracts text (GPU OCR if needed),
-        then pushes result to write_queue.
-        """
         while True:
             job = await self.read_queue.get()
-
-            if job is None:  # Sentinel — no more work
+            if job is None:
                 self.read_queue.task_done()
                 break
 
-            pdf_name = job["name"]
-            pages = job["pages"]
-            extracted_pages = []
-
+            pdf_name, pages = job["name"], job["pages"]
             try:
-                # Collect pages that need OCR (no digital text)
-                text_pages, ocr_needed = [], []
+                extracted: list[tuple[int, str]] = []
+                ocr_needed = []
 
                 for pg_num, page in enumerate(pages, 1):
                     text = await asyncio.to_thread(self.text_extractor.run, page)
                     if text:
-                        extracted_pages.append(f"--- Page {pg_num} ---\n{text}")
-                        text_pages.append(pg_num)
+                        extracted.append((pg_num, f"--- Page {pg_num} ---\n{text}"))
                     else:
                         ocr_needed.append((pg_num, page))
 
-                # GPU batch OCR for scanned pages
                 if ocr_needed:
-                    log.info(f"   🖼️  [{worker_id}] {pdf_name}: {len(ocr_needed)} pages → GPU OCR")
-                    pg_nums = [p[0] for p in ocr_needed]
-                    pg_objs = [p[1] for p in ocr_needed]
-
-                    ocr_texts = await asyncio.to_thread(
-                        self.gpu_ocr.infer_batch, pg_objs
+                    log.info(f"   [{worker_id}] {pdf_name}: {len(ocr_needed)} pages -> OCR")
+                    texts = await asyncio.to_thread(
+                        self.gpu_ocr.infer_batch, [p for _, p in ocr_needed]
                     )
-
-                    for pg_num, ocr_text in zip(pg_nums, ocr_texts):
+                    for (pg_num, _), ocr_text in zip(ocr_needed, texts):
                         if ocr_text:
-                            extracted_pages.append(f"--- Page {pg_num} (OCR) ---\n{ocr_text}")
+                            extracted.append(
+                                (pg_num, f"--- Page {pg_num} (OCR) ---\n{ocr_text}")
+                            )
 
                 self._stats["pages"] += len(pages)
 
-                # Sort pages back into order
-                full_text = "\n\n".join(
-                    sorted(extracted_pages, key=lambda x: int(
-                        x.split("---")[1].strip().split()[1]
-                    ) if "---" in x else 0)
-                )
+                # Sort by the page number carried alongside, rather than by
+                # re-parsing it out of the header string.
+                extracted.sort(key=lambda t: t[0])
+                full_text = "\n\n".join(t for _, t in extracted)
 
                 await self.write_queue.put({
                     "name": pdf_name,
-                    "text": full_text or "[NO TEXT EXTRACTED]",
+                    "text": full_text,
                     "pages": len(pages),
+                    "sha256": job.get("sha256", ""),
                 })
-
             except Exception as e:
-                log.error(f"❌ OCR failed: {pdf_name} — {e}")
+                log.error(f"OCR failed: {pdf_name} - {e}")
                 self.checkpoint.mark_failed(pdf_name)
                 self._stats["failed"] += 1
 
             self.read_queue.task_done()
 
-        # Signal writer when last OCR worker is done
         await self.write_queue.put(None)
 
-    # ── Stage 3: Writer ───────────────────────────────────────────────────────
+    # ── Stage 3: Writer — normalise, quality-gate, persist text ──────────────
     async def _writer_worker(self):
-        """Saves extracted text to disk and forwards to embedder."""
         none_count = 0
-
         while True:
             job = await self.write_queue.get()
-
             if job is None:
                 none_count += 1
                 if none_count >= self.cfg.ASYNC_WORKERS:
@@ -192,41 +215,71 @@ class AsyncPipeline:
                     break
                 continue
 
+            name = job["name"]
             try:
-                await asyncio.to_thread(
-                    self.exporter.save, job["name"], job["text"]
-                )
-                self.checkpoint.mark_done(job["name"])
-                self._stats["done"] += 1
+                text = normalize(job["text"])
 
-                # Forward to embedder
+                report = await asyncio.to_thread(score, text)
+                if not report.passed:
+                    # Discarded, not repaired: quality over coverage.
+                    await asyncio.to_thread(
+                        self.exporter.quarantine, name, text, report
+                    )
+                    self.checkpoint.mark_failed(name)
+                    self._stats["quarantined"] += 1
+                    continue
+
+                await asyncio.to_thread(self.exporter.save, name, text)
+                job["text"] = text
                 await self.embed_queue.put(job)
-                log.info(f"   💾 Saved: {job['name']}")
-
             except Exception as e:
-                log.error(f"❌ Write failed: {job['name']} — {e}")
+                log.error(f"Write failed: {name} - {e}")
+                self.checkpoint.mark_failed(name)
+                self._stats["failed"] += 1
 
-    # ── Stage 4: Embedder (background) ───────────────────────────────────────
+    # ── Stage 4: Embedder — the ONLY place a book is marked done ─────────────
     async def _embed_worker(self):
-        """Chunks text and batch-adds to FAISS (GPU-accelerated when available)."""
         while True:
             job = await self.embed_queue.get()
-
             if job is None:
                 break
 
+            name = job["name"]
             try:
-                chunks = self.chunker.chunk(job["text"])
-                if not chunks:
-                    continue
-                metas = [{"source": job["name"]}] * len(chunks)
-                # add_batch uses GPU batch embedding -- much faster than one-by-one
-                await asyncio.to_thread(
-                    self.retriever.add_batch, chunks, metas
+                rows = self.chunker.chunk_with_meta(
+                    job["text"], name, book_id=self.manifest.book_count
                 )
-                log.info(f"   Indexed {len(chunks)} chunks from {job['name']}")
+                if not rows:
+                    log.warning(f"No chunks produced: {name}")
+                    self.checkpoint.mark_failed(name)
+                    self._stats["failed"] += 1
+                    continue
+
+                texts = [r.pop("text") for r in rows]
+                await asyncio.to_thread(self.retriever.add_batch, texts, rows)
+
+                self.manifest.add_book(
+                    name,
+                    book_id=rows[0]["book_id"],
+                    n_chunks=len(rows),
+                    n_pages=job.get("pages", 0),
+                    char_count=len(job["text"]),
+                    sha256=job.get("sha256", ""),
+                )
+
+                # Persist BEFORE marking done: if this crashes, the book is
+                # retried rather than skipped forever.
+                await asyncio.to_thread(self.retriever.save)
+                self.manifest.save()
+
+                self.checkpoint.mark_done(name)
+                self._stats["done"] += 1
+                self._stats["chunks"] += len(rows)
+                log.info(f"   Indexed {len(rows)} chunks from {name}")
             except Exception as e:
-                log.warning(f"Embed failed: {job['name']} -- {e}")
+                log.warning(f"Embed failed: {name} - {e}")
+                self.checkpoint.mark_failed(name)
+                self._stats["failed"] += 1
 
     def _list_pdfs(self) -> list:
         os.makedirs(self.cfg.INPUT_DIR, exist_ok=True)
