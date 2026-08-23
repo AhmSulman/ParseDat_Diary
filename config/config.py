@@ -75,6 +75,20 @@ class Config:
     EMBED_TRUST_REMOTE_CODE: bool = False
     EMBED_DIM: int         = 768       # was hardcoded as DIM=384 in retriever.py
 
+    # LLM backend
+    # "server" talks HTTP to a running llama-server; "local" uses the in-process
+    # llama-cpp-python build. "auto" prefers the server and falls back.
+    #
+    # The server exists because llama-cpp-python is a dead end here: the
+    # installed 0.3.23 is CPU-only, and the newest prebuilt CUDA wheel (0.3.4)
+    # predates Qwen3. llama-server supports every architecture and real GPU
+    # offload without building anything.
+    LLM_BACKEND: str       = "auto"
+    LLM_SERVER_URL: str    = "http://127.0.0.1:8084"
+    # Headroom left for the answer. Generous because reasoning models spend
+    # 500-2000 tokens inside <think> before writing a word of the answer.
+    LLM_ANSWER_RESERVE: int = 1500
+
     # Retrieval
     # Budget: 6 windows x ~3200 chars = ~19,200 chars = ~4,800 tokens, leaving
     # ~3,392 of the 8192-token window for the prompt and the answer.

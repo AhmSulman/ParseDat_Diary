@@ -127,13 +127,27 @@ class Embedder:
         trust = bool(getattr(cfg, "EMBED_TRUST_REMOTE_CODE", False))
         extra = {"trust_remote_code": True} if trust else {}
 
-        for name, kwargs in (
-            (cfg.EMBED_MODEL, extra),
-            (cfg.EMBED_FALLBACK, extra),
-        ):
+        def kwargs_for(_name: str) -> dict:
+            return dict(extra)
+
+        # Try the LOCAL CACHE for every candidate before touching the network.
+        #
+        # This is what actually makes the app offline, and it is not optional.
+        # Without local_files_only, sentence-transformers issues a HEAD request
+        # to the hub to check for updates even when the model is fully cached —
+        # so with no network it retries, then fails, and a 419 MB model sitting
+        # on disk still will not load. Verified by pointing HF_ENDPOINT at a
+        # dead host: cached bge failed to load entirely and fell through to a
+        # fallback that was not cached either.
+        for name, local_only in ((cfg.EMBED_MODEL, True), (cfg.EMBED_FALLBACK, True),
+                                 (cfg.EMBED_MODEL, False), (cfg.EMBED_FALLBACK, False)):
+            if not name:
+                continue
             try:
-                log.info(f"Loading embedder: {name} on {_device}")
-                m = SentenceTransformer(name, device=_device, **kwargs)
+                log.info(f"Loading embedder: {name} on {_device}"
+                         f" ({'cache' if local_only else 'hub'})")
+                m = SentenceTransformer(name, device=_device,
+                                        local_files_only=local_only, **kwargs_for(name))
                 if not _smoke_test(m, cfg.EMBED_DIM):
                     log.warning(f"{name} produced an unexpected vector shape")
                     continue
@@ -141,7 +155,12 @@ class Embedder:
                 log.info(f"Embedder ready: {name} ({cfg.EMBED_DIM}-dim, {_device})")
                 return _model
             except Exception as e:
-                log.warning(f"Could not load {name}: {str(e)[:200]}")
+                # A local cache miss is expected and routine; only a failed
+                # network attempt is worth warning about.
+                if local_only:
+                    log.info(f"Not in local cache: {name}")
+                else:
+                    log.warning(f"Could not fetch {name}: {str(e)[:160]}")
 
         log.error("No embedder could be loaded")
         return None

@@ -29,9 +29,33 @@ class RAGPipeline:
         # CPU for the embedder here: chat loads the 7B model, and there is no
         # VRAM left for a second model. One short query costs ~15 ms on CPU.
         self.retriever = Retriever(device="cpu")
-        self.llm = LocalLLM(model_path=model_path, gpu_layers=gpu_layers)
+        self.llm = self._pick_backend(model_path, gpu_layers)
         self.manifest = Manifest()
         self.top_k = cfg.SEARCH_TOP_K
+        self.char_budget = cfg.CONTEXT_CHAR_BUDGET
+
+    def _pick_backend(self, model_path, gpu_layers):
+        """
+        Prefer a running llama-server, fall back to the in-process build.
+
+        Chosen at construction rather than configured once, so the app still
+        works when the server is not running instead of failing outright.
+        """
+        cfg = self.cfg
+        if cfg.LLM_BACKEND in ("auto", "server"):
+            try:
+                from brain.llm_server import LlamaServerLLM
+                srv = LlamaServerLLM(base_url=cfg.LLM_SERVER_URL,
+                                     model_path=model_path, gpu_layers=gpu_layers)
+                if srv.load():
+                    return srv
+                if cfg.LLM_BACKEND == "server":
+                    log.error(f"LLM_BACKEND='server' but {cfg.LLM_SERVER_URL} is unreachable")
+                    return srv
+                log.info("No llama-server found — using the in-process model")
+            except Exception as e:
+                log.warning(f"Server backend unavailable: {str(e)[:160]}")
+        return LocalLLM(model_path=model_path, gpu_layers=gpu_layers)
 
     def setup(self) -> bool:
         log.info("Loading MAAN RAG pipeline...")
@@ -45,12 +69,33 @@ class RAGPipeline:
                 f"Library: {self.manifest.book_count or self.retriever.book_count} "
                 f"books, {self.retriever.chunk_count} chunks"
             )
-        return self.llm.load()
+
+        ok = self.llm.load()
+
+        # Fit the retrieval budget to the server's REAL context window.
+        # llama-server is launched separately, so its -c may be smaller than
+        # config assumes (e.g. -c 4096 against a 20,000-char budget). llama.cpp
+        # would silently drop the front of the prompt — the passages — and the
+        # model would answer confidently from a fragment with nothing logged.
+        fit = getattr(self.llm, "usable_context_chars", None)
+        if callable(fit):
+            usable = fit(reserve_tokens=self.cfg.LLM_ANSWER_RESERVE)
+            if usable and usable < self.char_budget:
+                shrink = max(1, round(self.top_k * usable / self.char_budget))
+                log.warning(
+                    f"Server context fits ~{usable:,} chars, not "
+                    f"{self.char_budget:,}. Reducing top_k {self.top_k}->{shrink}. "
+                    f"Restart llama-server with -c 8192 for full retrieval."
+                )
+                self.char_budget = usable
+                self.top_k = shrink
+        return ok
 
     # ── answering ─────────────────────────────────────────────────────────────
     def answer(self, question: str, stream: bool = True):
         """Yield answer tokens, then a reference footer resolving each [N]."""
-        passages = self.retriever.search_with_context(question, k=self.top_k)
+        passages = self.retriever.search_with_context(
+            question, k=self.top_k, char_budget=self.char_budget)
 
         if not passages:
             yield ("I could not find anything relevant in your books. "
@@ -64,12 +109,48 @@ class RAGPipeline:
 
         prompt = self.llm.build_rag_prompt(question, passages, library_titles=titles)
 
-        collected = []
+        # Reasoning models emit <think>...</think> before answering. That is
+        # working-out, not the answer: it must not be shown as prose, and it
+        # must not be scanned for citations — a [3] mentioned while thinking is
+        # not a claim. Suppress it live, keep it out of the validated text.
+        collected: list[str] = []
+        buf = ""
+        thinking = False
+        announced = False
+
         for token in self.llm.generate(prompt, stream=stream):
             collected.append(token)
-            yield token
+            buf += token
 
-        yield from self._citation_footer("".join(collected), passages)
+            while buf:
+                if not thinking:
+                    i = buf.find("<think>")
+                    if i == -1:
+                        # Hold back a possible partial "<think>" split across tokens.
+                        keep = 7
+                        if len(buf) > keep:
+                            yield buf[:-keep]
+                            buf = buf[-keep:]
+                        break
+                    if i:
+                        yield buf[:i]
+                    buf = buf[i + 7:]
+                    thinking = True
+                    if not announced:
+                        announced = True
+                        yield "[thinking…]"
+                else:
+                    j = buf.find("</think>")
+                    if j == -1:
+                        buf = buf[-8:]          # keep a possible split close tag
+                        break
+                    buf = buf[j + 8:]
+                    thinking = False
+        if buf and not thinking:
+            yield buf
+
+        from brain.llm_server import strip_thinking
+        yield from self._citation_footer(strip_thinking("".join(collected)), passages)
 
     def _citation_footer(self, answer: str, passages: list[dict]):
         """
