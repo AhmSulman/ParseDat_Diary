@@ -63,6 +63,16 @@ def _detect_device(preferred: str | None = None) -> str:
     return "cpu"
 
 
+def _free_cuda() -> None:
+    """Release cached VRAM after moving off the GPU, so the LLM can claim it."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def _smoke_test(model, expected_dim: int) -> bool:
     """Load-time proof the model actually produces vectors of the right shape."""
     try:
@@ -83,6 +93,22 @@ class Embedder:
     def _get_model(self):
         global _model, _model_name, _device
         if _model is not None:
+            # The cache is process-wide, and the GUI does ingest AND chat in one
+            # process. Returning the cached model without checking its device
+            # meant chat inherited the CUDA-resident embedder loaded by ingest,
+            # then sat in VRAM competing with Mistral — the exact OOM the device
+            # split exists to prevent. Move it instead; moving is far cheaper
+            # than reloading.
+            want = _detect_device(self.requested_device)
+            if self.requested_device and _device != want:
+                try:
+                    log.info(f"Moving embedder {_device} -> {want}")
+                    _model = _model.to(want)
+                    _device = want
+                    if want == "cpu":
+                        _free_cuda()
+                except Exception as e:
+                    log.warning(f"Could not move embedder to {want}: {e}")
             return _model
 
         try:
