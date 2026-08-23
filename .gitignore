@@ -63,3 +63,6 @@ bin/
 .env
 *.env
 secrets.json
+
+# Local safety backup of pre-rewrite git history (985 MB) — never commit
+.git.backup/
