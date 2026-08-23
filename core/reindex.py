@@ -55,12 +55,8 @@ def reindex(device: str = "cuda") -> dict:
 
     manifest = Manifest()
     manifest.books = {}
-    manifest.set_settings(
-        embed_model=cfg.EMBED_MODEL,
-        embed_dim=cfg.EMBED_DIM,
-        chunk_size=cfg.CHUNK_SIZE,
-        chunk_overlap=cfg.CHUNK_OVERLAP,
-    )
+    # Settings are written AFTER the first batch, once the embedder has actually
+    # resolved — see the note before manifest.save() below.
 
     os.makedirs(cfg.INPUT_DIR, exist_ok=True)
     # data/input, never data/txt — see module docstring.
@@ -124,6 +120,24 @@ def reindex(device: str = "cuda") -> dict:
         except Exception as e:
             log.error(f"  failed {pdf}: {e}")
             stats["failed"].append(pdf)
+
+    # Record the model that ACTUALLY loaded, not the one configured. The
+    # configured model can fall back (Jina needs trust_remote_code and may not
+    # load), and the fallback is also 768-dim — so recording the configured name
+    # would let an index built with one model be queried with the other, at
+    # matching dimensions, producing silent garbage that no dim check catches.
+    resolved = retriever.embedder.model_name or cfg.EMBED_MODEL
+    manifest.set_settings(
+        embed_model=resolved,
+        embed_dim=cfg.EMBED_DIM,
+        chunk_size=cfg.CHUNK_SIZE,
+        chunk_overlap=cfg.CHUNK_OVERLAP,
+    )
+    if resolved != cfg.EMBED_MODEL:
+        log.warning(
+            f"Configured embedder '{cfg.EMBED_MODEL}' did not load; "
+            f"index built with fallback '{resolved}'."
+        )
 
     retriever.save()
     manifest.save()

@@ -78,13 +78,6 @@ class AsyncPipeline:
         log.info(f"MAAN pipeline: {len(pdfs)} PDFs, {self.cfg.ASYNC_WORKERS} workers")
         self.retriever.load()
 
-        self.manifest.set_settings(
-            embed_model=self.cfg.EMBED_MODEL,
-            embed_dim=self.cfg.EMBED_DIM,
-            chunk_size=self.cfg.CHUNK_SIZE,
-            chunk_overlap=self.cfg.CHUNK_OVERLAP,
-        )
-
         t0 = time.perf_counter()
         await asyncio.gather(
             self._reader_worker(pdfs),
@@ -92,6 +85,23 @@ class AsyncPipeline:
             self._writer_worker(),
             self._embed_worker(),
         )
+        # The model that ACTUALLY loaded, not the configured one: the configured
+        # embedder can fall back, and the fallback is also 768-dim, so recording
+        # the wrong name would let this index later be queried with a different
+        # model at matching dimensions — silent garbage no dim check catches.
+        resolved = self.retriever.embedder.model_name or self.cfg.EMBED_MODEL
+        self.manifest.set_settings(
+            embed_model=resolved,
+            embed_dim=self.cfg.EMBED_DIM,
+            chunk_size=self.cfg.CHUNK_SIZE,
+            chunk_overlap=self.cfg.CHUNK_OVERLAP,
+        )
+        if resolved != self.cfg.EMBED_MODEL:
+            log.warning(
+                f"Configured embedder '{self.cfg.EMBED_MODEL}' did not load; "
+                f"index built with fallback '{resolved}'."
+            )
+
         self.retriever.save()
         self.manifest.save()
 

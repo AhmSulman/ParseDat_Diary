@@ -57,6 +57,8 @@ class Retriever:
         self._faiss = self._load_faiss_lib()
         self._lock = threading.Lock()
         self._neighbors: dict[tuple[str, int], int] = {}
+        self._manifest_model: str | None = None
+        self._model_verified = False
 
         # Absolute path. The old code called os.makedirs("data/cache"), a bare
         # relative path that created a stray folder whenever the working
@@ -113,6 +115,32 @@ class Retriever:
                     self._neighbors[key] = base + off
 
     # ── Reading ───────────────────────────────────────────────────────────────
+    def _verify_model(self) -> bool:
+        """
+        Confirm the loaded embedder is the one this index was built with.
+
+        Checked here rather than in load() because the model name is only known
+        once the embedder resolves, and resolution can fall back. The dimension
+        check cannot substitute: the configured model and its fallback are BOTH
+        768-dim, so querying a bge-built index with Jina vectors would pass every
+        dimension check and return confident nonsense.
+        """
+        if self._model_verified:
+            return True
+        built_with = self._manifest_model
+        if not built_with:
+            self._model_verified = True      # index predates the record
+            return True
+        actual = self.embedder.model_name
+        if actual and actual != built_with:
+            log.error(
+                f"Index was built with '{built_with}' but '{actual}' loaded. "
+                "Vectors are not comparable. Run: python main.py reindex"
+            )
+            return False
+        self._model_verified = True
+        return True
+
     def search(self, query: str, k: int | None = None) -> list[dict]:
         """Raw top-k chunks, no expansion."""
         k = k or self.cfg.SEARCH_TOP_K
@@ -120,6 +148,8 @@ class Retriever:
             return []
         vec = self.embedder.embed_query(query)
         if vec is None:
+            return []
+        if not self._verify_model():
             return []
 
         k = min(k, self.index.ntotal)
@@ -258,11 +288,11 @@ class Retriever:
             log.info("No index found. Run: python main.py ingest")
             return False
 
-        ok, why = Manifest().is_compatible(self.cfg.EMBED_MODEL, self.cfg.EMBED_DIM)
-        if not ok:
-            log.warning(f"Index incompatible: {why}")
-            return False
-
+        # Dimension only. The model NAME cannot be checked here without loading
+        # the embedder, which load() must not do — the configured model may fall
+        # back, so the real name is only known once it resolves. That check is
+        # deferred to the first search, see _verify_model().
+        self._manifest_model = Manifest().settings.get("embed_model")
         try:
             idx = self._faiss.read_index(INDEX_FILE)
             with open(META_FILE, "r", encoding="utf-8") as f:
