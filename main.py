@@ -36,6 +36,112 @@ def print_banner():
 """)
 
 
+def _print_removed(removed: dict):
+    total = sum(len(v) for v in removed.values())
+    if not total:
+        print("Nothing to remove — already consistent.")
+        return
+    for kind, items in removed.items():
+        if items:
+            print(f"  {kind}: {len(items)}")
+            for i in items[:10]:
+                print(f"      - {i}")
+            if len(items) > 10:
+                print(f"      ... and {len(items) - 10} more")
+    print(f"\nRemoved {total} item(s).")
+
+
+def _doctor():
+    """
+    Read-only reconciliation report.
+
+    The counts below are the ones that used to disagree: 18 books marked done,
+    7 actually indexed, 13 PDFs on disk. Any nonzero drift means a question
+    about the library has more than one answer.
+    """
+    from storage.library import LibraryService
+
+    rep = LibraryService().report()
+    c = rep["counts"]
+
+    print("LIBRARY")
+    print(f"  PDFs on disk      : {c['pdfs_on_disk']}")
+    print(f"  Books indexed     : {c['books_indexed']}")
+    print(f"  Chunks indexed    : {c['chunks_indexed']:,}")
+    print(f"  Checkpoint 'done' : {c['checkpoint_done']}")
+    print(f"  Extracted .txt    : {c['txt_files']}")
+    print(f"  Quarantined       : {c['quarantined']}")
+
+    if rep["settings"]:
+        s = rep["settings"]
+        print("\nINDEX BUILT WITH")
+        print(f"  embedder : {s.get('embed_model')} ({s.get('embed_dim')}-dim)")
+        print(f"  chunking : {s.get('chunk_size')} / {s.get('chunk_overlap')} overlap")
+
+    if rep["holes"]:
+        print(f"\nHOLES — marked done but never indexed ({len(rep['holes'])}):")
+        print("  These are invisible to the AI. Fix: python main.py reindex")
+        for h in rep["holes"]:
+            print(f"      - {h}")
+
+    orph = rep["orphans"]
+    if any(orph.values()):
+        print("\nORPHANS — derived data whose PDF is gone:")
+        for kind, items in orph.items():
+            for i in items:
+                print(f"      [{kind}] {i}")
+        print("  Fix: python main.py sync")
+
+    if rep["pending"]:
+        print(f"\nPENDING — not yet processed ({len(rep['pending'])}):")
+        for p in rep["pending"]:
+            print(f"      - {p}")
+        print("  Fix: python main.py ingest")
+
+    if rep["quarantine"]:
+        print("\nQUARANTINED — failed the quality gate, never indexed:")
+        for q in rep["quarantine"]:
+            print(f"      - {q.get('source')}")
+            for r in q.get("reasons", [])[:3]:
+                print(f"          {r}")
+
+    print()
+    if rep["healthy"]:
+        print(f"HEALTHY — every store agrees at {c['pdfs_on_disk']} book(s).")
+    else:
+        print(f"DRIFT: {rep['drift']} inconsistency(ies). See the fixes above.")
+
+
+def _clean(args):
+    from storage.library import LibraryService
+
+    scopes = dict(
+        index=args.index or args.all,
+        checkpoint=args.checkpoint or args.all,
+        orphans=args.orphans or args.all,
+        quarantine=args.quarantine or args.all,
+        text=args.text or args.all,
+    )
+    if not any(scopes.values()):
+        print("Nothing selected. Choose --index, --checkpoint, --orphans, "
+              "--quarantine, --text, or --all.")
+        return
+
+    # --text forces a full re-OCR of every book, which is the expensive,
+    # hard-to-undo one. Confirm it explicitly.
+    if (args.all or args.text) and not args.yes:
+        picked = ", ".join(k for k, v in scopes.items() if v)
+        print(f"About to delete: {picked}")
+        if scopes["text"]:
+            print("  --text removes extracted text: every book must be re-OCR'd.")
+        if input("Type 'yes' to continue: ").strip().lower() != "yes":
+            print("Aborted.")
+            return
+
+    _print_removed(LibraryService().clean(**scopes))
+    print("\nRe-run 'python main.py doctor' to confirm.")
+
+
 def main():
     print_banner()
 
@@ -64,6 +170,39 @@ def main():
     search_p = subparsers.add_parser("search", help="Semantic search without chat")
     search_p.add_argument("query", type=str, help="Search query")
     search_p.add_argument("--top-k", type=int, default=5)
+
+    # ── doctor ────────────────────────────────────────────────────────────────
+    subparsers.add_parser(
+        "doctor", help="Report library state and any drift (read-only)"
+    )
+
+    # ── clean ─────────────────────────────────────────────────────────────────
+    clean_p = subparsers.add_parser("clean", help="Remove derived data")
+    clean_p.add_argument("--index", action="store_true",
+                         help="Drop the vector index, metadata and manifest")
+    clean_p.add_argument("--checkpoint", action="store_true",
+                         help="Reset the ingest checkpoint")
+    clean_p.add_argument("--orphans", action="store_true",
+                         help="Remove derived data whose PDF is gone")
+    clean_p.add_argument("--quarantine", action="store_true",
+                         help="Empty data/quarantine/")
+    clean_p.add_argument("--text", action="store_true",
+                         help="Delete extracted text (forces re-OCR)")
+    clean_p.add_argument("--all", action="store_true",
+                         help="Everything derived. Asks for confirmation.")
+    clean_p.add_argument("--yes", action="store_true", help="Skip confirmation")
+
+    # ── sync ──────────────────────────────────────────────────────────────────
+    subparsers.add_parser(
+        "sync", help="Reconcile all derived data to data/input/ (after deleting PDFs)"
+    )
+
+    # ── reindex ───────────────────────────────────────────────────────────────
+    reindex_p = subparsers.add_parser(
+        "reindex", help="Rebuild vectors from extracted text (no OCR)"
+    )
+    reindex_p.add_argument("--device", default=None,
+                           help="cuda or cpu (default: auto)")
 
     # ── gui ───────────────────────────────────────────────────────────────────
     gui_p = subparsers.add_parser("gui", help="Launch Material Design GUI")
@@ -100,6 +239,34 @@ def main():
         for i, res in enumerate(results, 1):
             print(f"  [{i}] {res['source']}  (score: {res['score']:.4f})")
             print(f"      {res['chunk'][:200].strip()}...\n")
+
+    elif args.command == "doctor":
+        _doctor()
+
+    elif args.command == "clean":
+        _clean(args)
+
+    elif args.command == "sync":
+        from storage.library import LibraryService
+        removed = LibraryService().clean(orphans=True)
+        _print_removed(removed)
+        print("\nRe-run 'python main.py doctor' to confirm.")
+
+    elif args.command == "reindex":
+        from core.reindex import reindex
+        st = reindex(device=args.device) if args.device else reindex()
+        print(f"\nReindexed {st['indexed']} book(s), {st['chunks']:,} chunks "
+              f"in {st['elapsed']}s")
+        print(f"  embedder   : {st['embed_model']} on {st['device']}")
+        if st["quarantined"]:
+            print(f"  quarantined: {st['quarantined']} (see data/quarantine/)")
+        if st["needs_ingest"]:
+            print(f"  need ingest: {len(st['needs_ingest'])} book(s) have no "
+                  f"extracted text yet -> run 'python main.py ingest'")
+            for b in st["needs_ingest"]:
+                print(f"      - {b}")
+        if st["failed"]:
+            print(f"  failed     : {st['failed']}")
 
     elif args.command == "gui":
         from gui.material_app import run_gui
