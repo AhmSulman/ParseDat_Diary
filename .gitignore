@@ -22,7 +22,15 @@ data/txt/
 data/json/
 # Tessdata: large trained models — auto-downloaded to data/tessdata/
 data/tessdata/
-# Keep data/input/ tracked (drop your PDFs here)
+# Books are the user's own library: large and copyrighted. Keep the folder and
+# its README tracked, never the PDFs themselves.
+data/input/*
+!data/input/README.md
+!data/input/README.txt
+# Quarantined books that failed the quality gate (derived, reproducible)
+data/quarantine/
+# GUI-managed PDF categories — local user state
+data/categories.json
 
 # ── Logs ──────────────────────────────────────────────────────
 logs/app.log
