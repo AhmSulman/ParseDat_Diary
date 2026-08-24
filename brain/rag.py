@@ -127,6 +127,7 @@ class RAGPipeline:
         buf = ""
         state = "unknown"          # unknown -> thinking-confirmed | plain
         announced = False
+        ticks = 0
         PROBE_LIMIT = 6000         # chars held before concluding "no reasoning"
 
         for token in self.llm.generate(prompt, stream=stream):
@@ -141,6 +142,8 @@ class RAGPipeline:
             if end != -1:
                 buf = buf[end + 8:]        # drop the reasoning entirely
                 state = "plain"
+                if announced:
+                    yield "]" + chr(10) + chr(10)
                 if buf:
                     yield buf.lstrip()
                     buf = ""
@@ -148,7 +151,17 @@ class RAGPipeline:
 
             if not announced and len(buf) > 40:
                 announced = True
-                yield "[reasoning…]"
+                yield "[reasoning"
+
+            # Heartbeat while the reasoning is held back. Without it the UI
+            # shows nothing for the 500-2000 tokens R1 spends thinking, which
+            # on CPU is 3-4 minutes and is indistinguishable from a freeze --
+            # the GUI was reported as "not responding" while working normally.
+            if announced:
+                dots = len(buf) // 350
+                if dots > ticks:
+                    ticks = dots
+                    yield "."
 
             if len(buf) > PROBE_LIMIT:     # no reasoning block; release it
                 state = "plain"
