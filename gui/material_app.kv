@@ -415,18 +415,40 @@
                             height: dp(118)
 
                     # Send button
-                    MDFillRoundFlatIconButton:
-                        icon: 'send'
-                        text: 'Send'
-                        size_hint_x: None
-                        width: dp(200)
-                        height: dp(52)
+                    MDBoxLayout:
+                        adaptive_height: True
+                        spacing: dp(10)
                         pos_hint: {'center_x': 0.5}
-                        md_bg_color: app.theme_cls.accent_color
-                        theme_text_color: 'Custom'
-                        text_color: 0, 0, 0, 1
-                        elevation: 4
-                        on_release: root.on_ask()
+                        size_hint_x: None
+                        width: dp(470)
+
+                        MDFillRoundFlatIconButton:
+                            icon: 'send'
+                            text: 'Send'
+                            size_hint_x: None
+                            width: dp(180)
+                            height: dp(52)
+                            md_bg_color: app.theme_cls.accent_color
+                            theme_text_color: 'Custom'
+                            text_color: 0, 0, 0, 1
+                            elevation: 4
+                            on_release: root.on_ask()
+
+                        MDRoundFlatIconButton:
+                            icon: 'plus-circle-outline'
+                            text: 'New chat'
+                            size_hint_x: None
+                            width: dp(140)
+                            height: dp(52)
+                            on_release: root.on_new_chat()
+
+                        MDRoundFlatIconButton:
+                            icon: 'history'
+                            text: 'History'
+                            size_hint_x: None
+                            width: dp(130)
+                            height: dp(52)
+                            on_release: root.on_show_history()
 
                     # Answer card
                     MDCard:

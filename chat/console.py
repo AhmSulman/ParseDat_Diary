@@ -92,6 +92,14 @@ class Console:
         self._model_path = model_path
         self._gpu_layers = gpu_layers
 
+        from storage.history import History
+        self.history = History()
+        # Resume the latest conversation rather than silently opening a blank
+        # one, so closing the app does not lose the thread you were on.
+        last = self.history.latest_session_id()
+        if last:
+            self.history.set_current(last)
+
     # ── plumbing ──────────────────────────────────────────────────────────────
     def _ensure_rag(self) -> bool:
         if self.rag is not None:
@@ -117,6 +125,10 @@ class Console:
   set                 Show all knobs, ranges and current values
   set <knob> <value>  Change a knob (e.g. set top_k 8)
   reasoning on|off    Show or hide the model's chain-of-thought
+  history             Replay the current conversation
+  sessions            List every past conversation
+  new [title]         Start a fresh conversation (previous one is kept)
+  open <n>            Reopen conversation n from 'sessions'
   reindex             Rebuild all vectors from cached text
   clear               Clear the screen
   exit                Quit
@@ -259,17 +271,84 @@ class Console:
         self._ensure_rag()
         print()
         t = time.perf_counter()
-        shown = 0
+        parts = []
         try:
             for tok in self.rag.answer(q, stream=True):
-                if not self.show_reasoning and tok == "[reasoning…]":
-                    print("  [thinking…]", end="", flush=True)
-                    continue
+                parts.append(tok)
                 print(tok, end="", flush=True)
-                shown += len(tok)
         except KeyboardInterrupt:
-            print("\n  [interrupted]")
-        print(f"\n\n  ({time.perf_counter() - t:.1f}s, {shown} chars)\n")
+            print(chr(10) + "  [interrupted]")
+        elapsed = time.perf_counter() - t
+        answer = "".join(parts)
+
+        # Persist the turn. Answers used to vanish the moment the next question
+        # was asked, with no transcript and no record after closing the app.
+        try:
+            self.history.add_turn(
+                q, answer, elapsed=elapsed,
+                citations=self._citations_from(answer),
+                model=getattr(self.rag.llm, "_server_model", None),
+            )
+        except Exception as e:
+            log.warning(f"History not saved: {e}")
+        print(chr(10)*2 + f"  ({elapsed:.1f}s, {len(answer)} chars)" + chr(10))
+
+    @staticmethod
+    def _citations_from(answer: str) -> list[dict]:
+        """Recover the reference footer, so a saved turn stays checkable."""
+        import re
+        out = []
+        for m in re.finditer(r"^\s*\[(\d+)\]\s+(.+?)(?:,\s*p\.(\d+))?\s*$",
+                             answer, re.MULTILINE):
+            out.append({"n": int(m.group(1)),
+                        "source": m.group(2).strip(),
+                        "page_start": int(m.group(3)) if m.group(3) else None})
+        return out
+
+    # ── history ───────────────────────────────────────────────────────────────
+    def cmd_new(self, arg: str = ""):
+        sid = self.history.new_session(arg.strip() or None)
+        print(f"  Started a new conversation ({sid}). Previous one is saved.")
+
+    def cmd_sessions(self, _=""):
+        rows = self.history.sessions()
+        if not rows:
+            print("  No conversations yet.")
+            return
+        cur = self.history.session_id
+        print(chr(10) + f"  {chr(32)*2} {'WHEN':<17} {'TURNS':>5}  TITLE")
+        print("  " + "-" * 66)
+        for r in rows[:20]:
+            mark = "*" if r["id"] == cur else " "
+            when = r.get("created_at", "")[:16].replace("T", " ")
+            print(f"  {mark:2} {when:<17} {r['n_turns']:>5}  {r['title'][:38]}")
+        print("  " + "-" * 66)
+        print(f"  {len(rows)} conversation(s). '*' = current. "
+              f"Use 'open <n>' for the nth, or 'history' for this one." + chr(10))
+
+    def cmd_open(self, arg: str = ""):
+        rows = self.history.sessions()
+        if not arg.strip().isdigit():
+            print("  Usage: open <number from 'sessions'>")
+            return
+        n = int(arg.strip())
+        if not (1 <= n <= len(rows)):
+            print(f"  Pick 1-{len(rows)}")
+            return
+        sid = rows[n - 1]["id"]
+        self.history.set_current(sid)
+        print(f"  Now in: {rows[n-1]['title']}")
+        print(self.history.transcript(sid, limit=3) or "  (empty)")
+
+    def cmd_history(self, _=""):
+        sid = self.history.session_id
+        if not sid:
+            print("  No conversation open. Ask something, or 'sessions' to list.")
+            return
+        text = self.history.transcript(sid)
+        print()
+        print(text if text.strip() else "  (nothing asked yet in this conversation)")
+
 
     # ── loop ──────────────────────────────────────────────────────────────────
     def run(self):
@@ -295,6 +374,8 @@ class Console:
             "books": self.cmd_books, "forget": self.cmd_forget,
             "ingest": self.cmd_ingest, "reindex": self.cmd_reindex,
             "doctor": self.cmd_doctor, "ask": self.cmd_ask,
+            "new": self.cmd_new, "sessions": self.cmd_sessions,
+            "open": self.cmd_open, "history": self.cmd_history,
             "clear": lambda _="": os.system("cls" if os.name == "nt" else "clear"),
         }
 

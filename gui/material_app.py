@@ -100,6 +100,13 @@ class MaanMaterialRoot(MDBoxLayout):
         from storage.categories import CategoryManager
         self._cats = CategoryManager()
 
+        from storage.history import History
+        self._history = History()
+        self._turn_start = 0
+        last = self._history.latest_session_id()
+        if last:
+            self._history.set_current(last)
+
         Clock.schedule_once(lambda *_: self.refresh_pdf_list(), 0)
 
     def on_kv_post(self, base_widget):
@@ -376,7 +383,13 @@ class MaanMaterialRoot(MDBoxLayout):
 
         self._ask_busy = True
         fld.text = ""
-        self.answer_display = ""
+        # Append to the transcript rather than clearing it. Every answer used to
+        # overwrite the previous one, so the conversation vanished a question at
+        # a time and nothing survived closing the app.
+        if self.answer_display.strip():
+            self.answer_display += chr(10)*2 + ("-" * 40) + chr(10)*2
+        self.answer_display += "You: " + q + chr(10)*2
+        self._turn_start = len(self.answer_display)
 
         threading.Thread(target=self._ask_worker, args=(q,), daemon=True).start()
 
@@ -398,6 +411,12 @@ class MaanMaterialRoot(MDBoxLayout):
         finally:
             def done(*_):
                 self._ask_busy = False
+                # Persist the turn so it survives closing the app.
+                try:
+                    answer = self.answer_display[getattr(self, "_turn_start", 0):]
+                    self._history.add_turn(question, answer)
+                except Exception as ex:
+                    log.warning(f"History not saved: {ex}")
                 Clock.schedule_once(self._reflow_answer, 0)
             Clock.schedule_once(done, 0)
 
@@ -802,6 +821,24 @@ class MaanMaterialRoot(MDBoxLayout):
         else:
             self._toast(f"Embedder → {name}. Run reindex; search is disabled "
                         f"until you do.")
+
+    def on_new_chat(self):
+        """Start a fresh conversation. The previous one stays saved."""
+        sid = self._history.new_session()
+        self.answer_display = ""
+        self._turn_start = 0
+        self._toast(f"New conversation started. Previous one is saved.")
+        log.info(f"New chat session {sid}")
+
+    def on_show_history(self):
+        """Reload the current conversation into the answer pane."""
+        text = self._history.transcript()
+        if not text.strip():
+            self._toast("No history in this conversation yet.")
+            return
+        self.answer_display = text
+        self._turn_start = len(text)
+        Clock.schedule_once(self._reflow_answer, 0)
 
     def _toast(self, text: str):
         try:
