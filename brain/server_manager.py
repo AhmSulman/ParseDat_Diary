@@ -140,10 +140,23 @@ class ServerManager:
         free = free_ram_mb()
         if free is None:
             return True, ""                  # cannot tell; do not block
-        if free - need_mb < _RAM_FLOOR_MB:
+
+        # SWITCHING frees the current model first. Without this, swapping
+        # DeepSeek (4.4 GB) for Qwen3 (2.3 GB) is refused for lack of memory
+        # that the swap itself would release — every switch would be blocked
+        # once one model was loaded.
+        reclaim_mb = 0.0
+        if self.model_path and os.path.exists(self.model_path):
+            if os.path.abspath(self.model_path) != os.path.abspath(model_path):
+                reclaim_mb = os.path.getsize(self.model_path) / (1024 * 1024) + 700
+
+        available = free + reclaim_mb
+        if available - need_mb < _RAM_FLOOR_MB:
+            extra = (f" (+{reclaim_mb/1024:.1f} GB freed by unloading "
+                     f"{os.path.basename(self.model_path)})" if reclaim_mb else "")
             return False, (
-                f"needs ~{need_mb/1024:.1f} GB but only {free/1024:.1f} GB free; "
-                f"close something or stop the running model first"
+                f"needs ~{need_mb/1024:.1f} GB, only {free/1024:.1f} GB free"
+                f"{extra}; close something first"
             )
         return True, ""
 

@@ -642,20 +642,55 @@ class MaanMaterialRoot(MDBoxLayout):
             self.model_list_text = "  (none yet — use Download buttons)"
 
     def on_select_model(self, filename: str):
-        """Switch to a different local .gguf model."""
+        """
+        Actually load a different .gguf, by restarting llama-server on it.
+
+        The old version set llm.model_path and told the user to relaunch. That
+        did nothing: generation goes through llama-server, so the model is
+        whatever that process was started with. The picker appeared to work and
+        silently changed nothing.
+        """
         cfg = Config()
         full_path = os.path.join(cfg.MODELS_DIR, filename)
         if not os.path.exists(full_path):
             self._toast(f"Not found: {filename}")
             return
-        # Update running app
-        app = self._app
-        if app.rag and app.rag.llm:
-            app.rag.llm.model_path = full_path
-            self._toast(f"Switched model — reload LLM for it to take effect.")
+
+        from brain.server_manager import get_manager
+        mgr = get_manager()
+
+        ok, why = mgr.can_load(full_path)
+        if not ok:
+            # Refuse rather than thrash — an over-committed load freezes the
+            # desktop instead of raising.
+            self._toast(f"Cannot load: {why}")
+            return
+
         cfg.__class__.LLM_MODEL_PATH = full_path
+        self.active_model_label = f"{filename}  (loading…)"
+        self._toast(f"Loading {filename}… this takes a minute.")
+
+        def job():
+            started, msg = mgr.start(full_path)
+            Clock.schedule_once(lambda *_: self._model_loaded(filename, started, msg), 0)
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _model_loaded(self, filename: str, ok: bool, msg: str):
+        """Back on the UI thread once llama-server has finished loading."""
+        if not ok:
+            self.active_model_label = f"{filename}  (failed)"
+            self._toast(f"Load failed: {msg[:120]}")
+            return
         self.active_model_label = filename
-        self._toast(f"Model set to {filename}. Re-launch GUI to fully apply.")
+        # Re-point the pipeline at the now-running server.
+        app = self._app
+        if app and getattr(app, "rag", None) is not None:
+            try:
+                app.rag.llm.load()
+            except Exception as ex:
+                log.warning(f"Backend reconnect: {ex}")
+        self._toast(f"{filename} ready.")
 
     def on_download_model(self, name: str, url: str):
         """Download a preset model in a background thread."""
