@@ -20,7 +20,6 @@ class Config:
     # Paths (all absolute so the app works from any working directory)
     INPUT_DIR: str         = _p("data", "input")
     OUTPUT_TXT: str        = _p("data", "txt")
-    OUTPUT_JSON: str       = _p("data", "json")
     CACHE_DIR: str         = _p("data", "cache")
     CHECKPOINT_DIR: str    = _p("data", "checkpoints")
     MODELS_DIR: str        = _p("data", "models")
@@ -53,33 +52,28 @@ class Config:
 
     # Search / Embeddings
     #
-    # BAAI/bge-base-en-v1.5: MIT, 768-dim, 512-token, 109M params.
+    # BAAI/bge-base-en-v1.5 — MIT, 768-dim, 512-token, 109M params.
     #
-    # Chosen for OFFLINE-FIRST, which is the whole point of MAAN. bge is plain
-    # BERT: sentence-transformers loads it natively, so once the weights are
-    # cached it works with the network unplugged, permanently.
+    # Loaded from EMBED_LOCAL_DIR, a VENDORED copy inside the project. A
+    # filesystem path is not a repo id, so sentence-transformers treats it as a
+    # plain directory and never consults the hub: no lookup, no etag check, no
+    # dependence on ~/.cache surviving. One download, then offline forever.
     #
-    # Both Jina models were tried and rejected. Beyond failing against
-    # transformers 5.9 (v2: `No module named 'transformers.onnx'`; v3:
-    # `XLMRobertaLoRA has no attribute all_tied_weights_keys`), they require
-    # trust_remote_code — which downloads and EXECUTES Python from HuggingFace
-    # at load time. Observed directly: with 5.48 GB of v3 weights already on
-    # disk, it still fetched mlp.py, stochastic_depth.py and rotary.py from the
-    # hub. That is a network dependency on every cold start and remote code
-    # execution besides — incompatible with "no cloud, runs entirely on your
-    # machine".
+    # NO trust_remote_code. Models needing it download and EXECUTE Python from
+    # the hub at load time. Measured on jina-v3: with 5.48 GB of weights already
+    # cached it still fetched mlp.py, stochastic_depth.py and rotary.py. bge is
+    # plain BERT, so sentence-transformers loads it natively with no such hook.
     #
-    # So: never enable trust_remote_code here without accepting both costs.
-    # A VENDORED COPY of the weights, inside the project. Preferred over the
-    # hub id because a filesystem path skips HuggingFace's resolution entirely:
-    # no repo lookup, no etag check, no dependence on ~/.cache surviving. If
-    # this folder is missing, the loader falls back to EMBED_MODEL below and
-    # will use the user cache (or download once).
+    # NO FALLBACK, deliberately. A fallback only fires once both local copies of
+    # bge are gone, and at that point downloading a different model would swap
+    # the embedder under an index built with bge. The retriever refuses to search
+    # on a model mismatch, so the fallback buys nothing and costs a network round
+    # trip. Failing loudly with "restore data/models/embedder/" is more useful.
     EMBED_LOCAL_DIR: str   = _p("data", "models", "embedder", "bge-base-en-v1.5")
     EMBED_MODEL: str       = "BAAI/bge-base-en-v1.5"
-    EMBED_FALLBACK: str    = "sentence-transformers/all-mpnet-base-v2"  # 768-d, no remote code
+    EMBED_FALLBACK: str    = ""
     EMBED_TRUST_REMOTE_CODE: bool = False
-    EMBED_DIM: int         = 768       # was hardcoded as DIM=384 in retriever.py
+    EMBED_DIM: int         = 768
 
     # LLM backend
     # "server" talks HTTP to a running llama-server; "local" uses the in-process

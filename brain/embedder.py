@@ -16,9 +16,10 @@ for updates, and with no network it retries and then fails — a 419 MB model on
 disk still would not load. Vendoring removes the question entirely; the cache
 and hub remain as fallbacks if the folder is missing.
 
-Jina was rejected for the same reason: trust_remote_code downloads and EXECUTES
-Python from the hub at load time. With 5.48 GB of v3 weights already cached it
-still fetched mlp.py, stochastic_depth.py and rotary.py.
+Models needing trust_remote_code are rejected on the same grounds: they download
+and EXECUTE Python from the hub at load time. Measured on jina-v3 — with 5.48 GB
+of weights already cached it still fetched mlp.py, stochastic_depth.py and
+rotary.py.
 
 DEVICE POLICY: A VRAM CONSTRAINT, NOT AN OPTIMISATION
 -----------------------------------------------------
@@ -40,13 +41,14 @@ import numpy as np
 from config.config import Config
 from logs.logger import log
 
-# Must exceed CHUNK_SIZE, or chunks are silently truncated before embedding.
-# Jina handles 8192 tokens; 8000 chars is comfortably inside that.
+# Must exceed CHUNK_SIZE (1200), or chunks are silently truncated before
+# embedding. bge tokenises at 512 tokens and truncates internally beyond that;
+# the cap here only guards against pathological inputs.
 _CHAR_CAP = 8000
 
-# bge-* models are trained asymmetrically: queries need this prefix, passages do
-# not. Jina v2 is symmetric and needs no prefix. Getting this wrong costs
-# retrieval quality silently.
+# bge is trained asymmetrically: the QUERY gets this prefix, passages never do.
+# Getting it wrong costs retrieval quality silently — nothing errors, the scores
+# just get worse.
 _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 _model = None
@@ -84,6 +86,7 @@ def _smoke_test(model, expected_dim: int) -> bool:
     except Exception as e:
         log.warning(f"Embedder smoke test failed: {e}")
         return False
+
 
 
 class Embedder:
@@ -182,7 +185,12 @@ class Embedder:
                 else:
                     log.warning(f"Could not fetch {name}: {str(e)[:160]}")
 
-        log.error("No embedder could be loaded")
+        log.error(
+            "No embedder could be loaded. Restore the vendored weights at "
+            f"{getattr(cfg, 'EMBED_LOCAL_DIR', 'data/models/embedder/')} "
+            "(copy the bge-base-en-v1.5 snapshot from the HuggingFace cache), "
+            "or set EMBED_MODEL to a model you can download."
+        )
         return None
 
     @property

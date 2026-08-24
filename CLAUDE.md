@@ -56,7 +56,7 @@ data/input/*.pdf
         → core/normalize.py     (ligatures, de-hyphenation; idempotent)
         → core/quality.py       (PASS/FAIL -- failures go to data/quarantine/)
         → brain/chunker.py      (1200 chars / 200 overlap + page metadata)
-        → brain/embedder.py     (jina-embeddings-v2-base-en, 768-dim)
+        → brain/embedder.py     (BAAI/bge-base-en-v1.5, 768-dim, vendored)
         → brain/retriever.py    (FAISS CPU HNSWFlat)
     → data/cache/maan.index + maan_meta.json + maan_manifest.json
 
@@ -86,9 +86,13 @@ chat: question
 | `android_main.py` | Standalone Kivy client for Android (connects to FastAPI server) |
 
 ## Model
-- File: `data/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf` (~4.1 GB)
-- Auto-downloaded on first run via `data/models/auto_download.py`
-- GPU layers: 35 (RTX 4050, 6 GB VRAM)
+- File: `data/models/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf` (4.36 GB)
+- Served by `llama-server` over HTTP, not llama-cpp-python — the installed
+  0.3.23 is CPU-only and the newest prebuilt CUDA wheel (0.3.4) predates Qwen3.
+- Start it:
+  `llama-server -m <model>.gguf -ngl 99 -c 8192 -t 12 --port 8084`
+- `-c 8192` is required: the retrieval budget spends ~5,000 tokens on passages.
+  Lower it and llama.cpp silently drops the front of the prompt.
 
 ## External Dependencies on Windows
 - **Tesseract 5.5**: `C:\Program Files\Tesseract-OCR\` — auto-configured via registry
@@ -124,6 +128,29 @@ Six stores derive from it: index, metadata, manifest, checkpoint, `data/txt/`,
 **`reindex` enumerates `data/input/`, never `data/txt/`.** Walking the text
 directory would pick up orphaned `.txt` from deleted books and resurrect them,
 undoing a purge in the very next command.
+
+### The embedder is vendored, and that is what makes it offline
+`data/models/embedder/` holds the weights inside the project, and the loader
+prefers that folder. A filesystem path is not a repo id, so
+sentence-transformers treats it as a plain directory and never consults the
+hub. This matters because the hub is contacted even for fully cached models:
+without `local_files_only`, a HEAD request checks for updates, and with no
+network it retries and fails — a 421 MB model on disk still would not load.
+
+**No `trust_remote_code`.** Models needing it download and EXECUTE Python from
+the hub at load time. Measured on jina-v3: with 5.48 GB of weights already
+cached it still fetched `mlp.py`, `stochastic_depth.py` and `rotary.py`. bge is
+plain BERT, so sentence-transformers loads it natively with no such hook.
+
+**No fallback model.** A fallback only fires once both local copies of bge are
+gone, and downloading a different model then would swap the embedder under an
+index built with bge. The retriever refuses to search on a model mismatch, so
+the fallback buys nothing and costs a network round trip. Failing loudly with
+"restore data/models/embedder/" is more useful.
+
+bge is ASYMMETRIC: the QUERY gets a prefix, passages never do. Handled in
+`Embedder.embed_query()`. Getting it wrong errors nothing and quietly costs
+accuracy.
 
 ### Embedder device is explicit
 Mistral-7B at 35 layers plus an 8192 KV cache is ~5 GB of 6141 MiB. There is no

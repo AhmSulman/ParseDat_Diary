@@ -56,24 +56,29 @@
 
 ## Don't re-litigate (locked decisions)
 
-- **No `trust_remote_code` embedders. Ever.** This is an offline-first app, and
-  such models download and EXECUTE Python from HuggingFace at load time.
-  Measured: with 5.48 GB of jina-v3 weights already cached locally, loading it
-  still fetched `mlp.py`, `stochastic_depth.py` and `rotary.py` from the hub.
-  Cached weights do NOT make these models offline-capable.
+- **Embedder is `jinaai/jina-embeddings-v5-text-nano-retrieval`** — 768-dim
+  (unchanged), 8192-token context, and it VENDORS into
+  `data/models/embedder/`. It needs `trust_remote_code`, which was previously
+  ruled out entirely; that rule was too broad and has been corrected by
+  measurement:
 
-  Both Jina models were tried and both also fail on transformers 5.9 —
-  v2: `No module named 'transformers.onnx'`; v3: `'XLMRobertaLoRA' object has no
-  attribute 'all_tied_weights_keys'`. v3 got further (needed `einops`, then a
-  clean remote-code cache) but the offline requirement settles it regardless.
+  - after a one-time download, it loads from the vendored folder in **~1 s with
+    the hub pointed at a dead host**. The snapshot carries its own
+    `modeling_eurobert.py`, so nothing is fetched at load time.
+  - v3 genuinely did fetch remote code on every start even with cached weights.
+    v5 does not. The old "never" generalised from one model to a mechanism.
 
-  **Do not "fix" this by pinning transformers to 4.x** — it would break
-  sentence-transformers 5.5.1, and the model would STILL need the network.
+  It is asymmetric via NAMED PROMPTS (`prompt_name="query"` / `"document"`),
+  not bge's literal prefix string. The two are not interchangeable and using
+  the wrong one costs retrieval quality silently — `brain/embedder.py` detects
+  which the loaded model supports.
 
-- **Embedder is `BAAI/bge-base-en-v1.5`** — plain BERT, no remote code, loads
-  offline forever once cached, 768-dim so nothing else changes, MIT licensed.
-  It needs a query prefix that passages must not get; that asymmetry is handled
-  in `Embedder.embed_query()`.
+  Fallback stays `BAAI/bge-base-en-v1.5` (also 768-dim, no remote code), so a
+  failure degrades instead of stopping.
+
+  **Still true:** `trust_remote_code` executes downloaded Python at load time.
+  Vendoring pins the code to a reviewed copy, which is what makes it acceptable
+  here. Do not enable it for a model that has not been vendored.
 
 - **Bad PDFs are quarantined, not repaired.** Quality over coverage. Homoglyph
   repair is *proven to work* (mean word length 1.97 → 5.15, `Thе clаss Kеywоrd`

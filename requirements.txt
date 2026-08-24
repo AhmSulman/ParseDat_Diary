@@ -27,7 +27,6 @@ numpy==2.4.6                 # 2.x required for Python 3.12
 # ── Embeddings ────────────────────────────────────────────────
 sentence-transformers==5.5.1
 transformers==5.9.0
-einops                       # required by jina-embeddings-v2 remote code
 
 # NOTE: torch is deliberately NOT pinned here.
 #   - CPU-only install: sentence-transformers pulls a CPU torch automatically.
