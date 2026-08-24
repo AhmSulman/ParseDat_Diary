@@ -70,8 +70,9 @@ class LibraryService:
 
     # ── inspection ────────────────────────────────────────────────────────────
     def pdfs_on_disk(self) -> set[str]:
-        os.makedirs(self.cfg.INPUT_DIR, exist_ok=True)
-        return {f for f in os.listdir(self.cfg.INPUT_DIR) if f.lower().endswith(".pdf")}
+        """Every ingestable document, not just PDFs — data/input is the authority."""
+        from core.sources import list_sources
+        return set(list_sources(self.cfg.INPUT_DIR))
 
     def txt_stems(self) -> set[str]:
         if not os.path.isdir(_TXT):

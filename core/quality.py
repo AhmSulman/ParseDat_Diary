@@ -101,15 +101,29 @@ def homoglyph_count(text: str) -> int:
     return n
 
 
-def score(text: str) -> QualityReport:
-    """Score extracted book text. Returns PASS/FAIL with the reasons and metrics."""
+def score(text: str, authored: bool = False) -> QualityReport:
+    """
+    Score document text. Returns PASS/FAIL with the reasons and metrics.
+
+    `authored=True` for text the user wrote or exported (.md, .txt) rather than
+    text EXTRACTED from a PDF. This matters: most of these checks measure
+    extraction damage — OCR mangling, broken font maps, lost word spacing — and
+    none of that can happen to a file that was never extracted.
+
+    Applying the book heuristics to authored text produces false rejections: a
+    229-character note failed the 500-char minimum, and short notes, code-heavy
+    files and lists all trip metrics tuned for continuous book prose. So for
+    authored text only the checks that remain meaningful are applied — homoglyph
+    watermarking and decode failures, which can affect any file.
+    """
     body = _PAGE_MARKER.sub("", text or "").strip()
     n = len(body)
 
-    if n < MIN_CHARS:
+    min_chars = 40 if authored else MIN_CHARS
+    if n < min_chars:
         return QualityReport(
             passed=False,
-            reasons=[f"only {n} chars of text extracted (min {MIN_CHARS})"],
+            reasons=[f"only {n} chars of text (min {min_chars})"],
             metrics={"chars": float(n)},
         )
 
@@ -135,6 +149,19 @@ def score(text: str) -> QualityReport:
     }
 
     reasons: list[str] = []
+
+    # Authored text: only the source-agnostic checks. Everything below them
+    # measures extraction damage that cannot occur in a file nobody extracted.
+    if authored:
+        if homo_10k > MAX_HOMOGLYPH_PER_10K:
+            reasons.append(
+                f"{homo_10k:.0f} homoglyphs/10k > {MAX_HOMOGLYPH_PER_10K:.0f} "
+                f"(Latin letters replaced with Cyrillic/Greek lookalikes)"
+            )
+        if repl_10k > MAX_REPLACEMENT_PER_10K:
+            reasons.append(f"{repl_10k:.1f} U+FFFD/10k > {MAX_REPLACEMENT_PER_10K}")
+        return QualityReport(passed=not reasons, reasons=reasons, metrics=m)
+
     if mean_wl < MIN_MEAN_WORD_LEN:
         reasons.append(
             f"mean word length {mean_wl:.2f} < {MIN_MEAN_WORD_LEN} "

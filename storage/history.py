@@ -68,7 +68,28 @@ class History:
         return os.path.join(self.dir, "_index.json")
 
     # ── sessions ──────────────────────────────────────────────────────────────
+    def prune_empty(self, keep: str | None = None) -> int:
+        """
+        Drop sessions that never got a turn.
+
+        Opening the app or clicking "New chat" without asking anything would
+        otherwise leave an untitled empty conversation behind every time, and
+        the list fills with them.
+        """
+        removed = 0
+        for r in self.sessions():
+            if r.get("n_turns", 0) == 0 and r["id"] != keep:
+                p = self._path(r["id"])
+                if os.path.exists(p):
+                    os.remove(p)
+                    removed += 1
+        if removed:
+            self._reindex()
+        return removed
+
     def new_session(self, title: str | None = None) -> str:
+        # Clear out any abandoned empty conversations first.
+        self.prune_empty()
         sid = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
         payload = {
             "id": sid,
@@ -101,6 +122,9 @@ class History:
         if not os.path.exists(p):
             return False
         os.remove(p)
+        md = self.markdown_path(session_id)
+        if os.path.exists(md):
+            os.remove(md)
         if self.session_id == session_id:
             self.session_id = None
         self._reindex()
@@ -128,6 +152,11 @@ class History:
         if data.get("title") in (None, "", "New conversation"):
             data["title"] = question.strip().replace("\n", " ")[:_TITLE_MAX] or "Untitled"
         _atomic_write(self._path(sid), data)
+        # Keep the readable copy in step with the record.
+        try:
+            self.write_markdown(sid)
+        except OSError:
+            pass
         self._reindex()
 
     def turns(self, session_id: str | None = None) -> list[dict]:
@@ -154,6 +183,75 @@ class History:
                 out.append(f"    sources: {cites}")
             out.append("")
         return "\n".join(out)
+
+
+    # ── markdown export ───────────────────────────────────────────────────────
+    def markdown_path(self, session_id: str) -> str:
+        return os.path.splitext(self._path(session_id))[0] + ".md"
+
+    def to_markdown(self, session_id: str | None = None) -> str:
+        """
+        Render a conversation as markdown.
+
+        The JSON is the machine record; this is the one a human reads, greps or
+        keeps. Citations become a bullet list under each answer so the sources
+        stay attached to the claim rather than to the conversation as a whole.
+        """
+        sid = session_id or self.session_id
+        if not sid:
+            return ""
+        d = self.load_session(sid)
+        if not d:
+            return ""
+
+        turns = d.get("turns", [])
+        models = {t.get("model") for t in turns if t.get("model")}
+        out = [f"# {d.get('title', 'Conversation')}", ""]
+        meta = [f"Started {d.get('created_at', '?')}", f"{len(turns)} turn(s)"]
+        if models:
+            meta.append(", ".join(sorted(os.path.basename(str(m)) for m in models)))
+        out += ["*" + " - ".join(meta) + "*", ""]
+
+        for t in turns:
+            out += ["---", "", "## You", "", t.get("question", "").strip(), ""]
+            out += ["## MAAN", "", t.get("answer", "").strip(), ""]
+            cites = t.get("citations") or []
+            if cites:
+                out.append("**Sources**")
+                out.append("")
+                for c in cites:
+                    loc = c.get("source", "?")
+                    if c.get("page_start"):
+                        loc += f", p.{c['page_start']}"
+                    elif c.get("section"):
+                        loc += f" - {c['section']}"
+                    out.append(f"- [{c.get('n')}] {loc}")
+                out.append("")
+            if t.get("elapsed_s"):
+                out += [f"*answered in {t['elapsed_s']}s*", ""]
+        return chr(10).join(out)
+
+    def write_markdown(self, session_id: str | None = None) -> str | None:
+        """Write the .md next to the .json. Returns the path, or None."""
+        sid = session_id or self.session_id
+        if not sid:
+            return None
+        text = self.to_markdown(sid)
+        if not text.strip():
+            return None
+        path = self.markdown_path(sid)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+        return path
+
+    def export_all_markdown(self) -> int:
+        n = 0
+        for r in self.sessions():
+            if self.write_markdown(r["id"]):
+                n += 1
+        return n
 
     # ── listing ───────────────────────────────────────────────────────────────
     def _reindex(self) -> None:

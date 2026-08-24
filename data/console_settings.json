@@ -1,0 +1,5 @@
+{
+  "show_reasoning": true,
+  "top_k": 8,
+  "temperature": 0.2
+}

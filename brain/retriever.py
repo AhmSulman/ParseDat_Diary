@@ -258,6 +258,8 @@ class Retriever:
             "chunk_ids": cids,
             "page_start": min(pages) if pages else None,
             "page_end": max(pages) if pages else None,
+            # Markdown locator: the section the merged run begins in.
+            "section": rows[0].get("section"),
             "score": min(scored.get((source, c), 1e9) for c in cids),
         }
 

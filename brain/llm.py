@@ -157,13 +157,7 @@ class LocalLLM:
         for i, chunk in enumerate(context_chunks, 1):
             source = chunk.get("source", "unknown")
             text = chunk.get("chunk", "")
-            ps, pe = chunk.get("page_start"), chunk.get("page_end")
-            if ps and pe and ps != pe:
-                loc = f"{source}, p.{ps}-{pe}"
-            elif ps:
-                loc = f"{source}, p.{ps}"
-            else:
-                loc = source
+            loc = locate(chunk)
 
             block = f"\n[{i}] {loc}\n{text}\n"
             if used + len(block) > budget and parts:
@@ -214,3 +208,21 @@ ANSWER: """
             "uncited": uncited,
             "n_sources": n_sources,
         }
+
+def locate(chunk: dict) -> str:
+    """
+    Human-readable location of a passage.
+
+    PDFs cite a page. Markdown has no pages, so it cites the nearest heading —
+    "notes.md - ## Configuration" is checkable in a way the bare filename is not.
+    """
+    source = chunk.get("source", "unknown")
+    ps, pe = chunk.get("page_start"), chunk.get("page_end")
+    if ps and pe and ps != pe:
+        return f"{source}, p.{ps}-{pe}"
+    if ps:
+        return f"{source}, p.{ps}"
+    section = chunk.get("section")
+    if section:
+        return f"{source} - {section}"
+    return source

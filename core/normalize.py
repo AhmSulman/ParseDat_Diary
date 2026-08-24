@@ -156,3 +156,22 @@ def page_offsets(text: str) -> list[tuple[int, int]]:
         if digits:
             out.append((m.start(), int(digits.group(1))))
     return out
+
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+
+
+def heading_offsets(text: str) -> list[tuple[int, str]]:
+    """
+    Map character offset -> markdown heading, for locating a chunk in a .md file.
+
+    Markdown has no pages, so a citation cannot say "p.187". Its structure is
+    headings, so a chunk is located by the nearest heading above it — giving
+    "notes.md - Installation" instead of a bare filename.
+    """
+    out: list[tuple[int, str]] = []
+    for m in _MD_HEADING.finditer(text):
+        level = len(m.group(1))
+        title = m.group(2).strip()
+        if title:
+            out.append((m.start(), ("#" * level) + " " + title))
+    return out

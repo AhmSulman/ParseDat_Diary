@@ -129,6 +129,7 @@ class Console:
   sessions            List every past conversation
   new [title]         Start a fresh conversation (previous one is kept)
   open <n>            Reopen conversation n from 'sessions'
+  export [all]        Save conversation(s) as markdown
   reindex             Rebuild all vectors from cached text
   clear               Clear the screen
   exit                Quit
@@ -241,6 +242,21 @@ class Console:
         print(f"  Removed {src[:60]}")
         print("  Run 'reindex' to drop its vectors from the search index.")
         self.rag = None
+
+
+    def cmd_export(self, arg: str = ""):
+        """Write conversations to markdown next to their JSON records."""
+        if arg.strip().lower() == "all":
+            n = self.history.export_all_markdown()
+            print(f"  Exported {n} conversation(s) to data/sessions/*.md")
+            return
+        path = self.history.write_markdown()
+        if path:
+            print(f"  Wrote {path}")
+            print("  Tip: .md files in data/input/ are ingestable — you can add "
+                  "a chat back into the library.")
+        else:
+            print("  Nothing to export in this conversation yet.")
 
     def cmd_ingest(self, _=""):
         import asyncio
@@ -376,6 +392,7 @@ class Console:
             "doctor": self.cmd_doctor, "ask": self.cmd_ask,
             "new": self.cmd_new, "sessions": self.cmd_sessions,
             "open": self.cmd_open, "history": self.cmd_history,
+            "export": self.cmd_export,
             "clear": lambda _="": os.system("cls" if os.name == "nt" else "clear"),
         }
 

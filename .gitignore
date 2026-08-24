@@ -66,3 +66,9 @@ secrets.json
 
 # Local safety backup of pre-rewrite git history (985 MB) — never commit
 .git.backup/
+
+# Vendored embedder weights (419 MB) — regenerate by copying from the HF cache
+data/models/embedder/
+
+# Conversation history is personal
+data/sessions/

@@ -1,23 +1,24 @@
 """
 Embedder — text -> vector
 ==========================
-Default model: jinaai/jina-embeddings-v2-base-en
-  Apache 2.0, 768-dim, 8192-token context, 137M params.
+Model: BAAI/bge-base-en-v1.5 (MIT, 768-dim, 512-token, 109M params).
 
-WHY NOT all-MiniLM-L6-v2
-------------------------
-MiniLM truncates at 256 tokens. With 1200-char chunks (~300 tokens) it would
-silently discard the tail of every chunk — the text would be indexed, just not
-all of it, with no error. Jina's 8192-token window embeds a whole chunk, and its
-retrieval quality is materially better.
+OFFLINE IS THE POINT
+--------------------
+The weights are VENDORED into data/models/embedder/ and loaded from that
+folder. A filesystem path is not a repo id, so sentence-transformers treats it
+as a plain directory and never consults the hub: nothing to look up, nothing to
+time out, and no dependence on ~/.cache surviving.
 
-FALLBACK IS DELIBERATE
-----------------------
-Jina v2 needs `trust_remote_code=True`, which executes modelling code written
-against transformers 4.x while this venv runs transformers 5.x. That may break.
-Rather than fail the whole ingest, the loader smoke-tests the model (load, embed
-one string, check the shape) and falls back to BAAI/bge-base-en-v1.5 — also
-768-dim, so the index dimension is unaffected either way.
+That matters because the hub is consulted even for fully cached models.
+Without local_files_only, sentence-transformers issues a HEAD request to check
+for updates, and with no network it retries and then fails — a 419 MB model on
+disk still would not load. Vendoring removes the question entirely; the cache
+and hub remain as fallbacks if the folder is missing.
+
+Jina was rejected for the same reason: trust_remote_code downloads and EXECUTES
+Python from the hub at load time. With 5.48 GB of v3 weights already cached it
+still fetched mlp.py, stochastic_depth.py and rotary.py.
 
 DEVICE POLICY: A VRAM CONSTRAINT, NOT AN OPTIMISATION
 -----------------------------------------------------
@@ -31,6 +32,8 @@ alongside it.
 So the device is an explicit constructor argument. Guessing globally is what
 would put both models on the GPU at once and OOM mid-answer.
 """
+
+import os
 
 import numpy as np
 
@@ -139,8 +142,17 @@ class Embedder:
         # on disk still will not load. Verified by pointing HF_ENDPOINT at a
         # dead host: cached bge failed to load entirely and fell through to a
         # fallback that was not cached either.
-        for name, local_only in ((cfg.EMBED_MODEL, True), (cfg.EMBED_FALLBACK, True),
-                                 (cfg.EMBED_MODEL, False), (cfg.EMBED_FALLBACK, False)):
+        # The vendored folder comes first. A filesystem path is not a repo id,
+        # so sentence-transformers loads it as a plain directory and never
+        # consults the hub at all — no lookup to fail, no cache to lose.
+        vendored = getattr(cfg, "EMBED_LOCAL_DIR", "")
+        candidates = []
+        if vendored and os.path.isdir(vendored):
+            candidates.append((vendored, True))
+        candidates += [(cfg.EMBED_MODEL, True), (cfg.EMBED_FALLBACK, True),
+                       (cfg.EMBED_MODEL, False), (cfg.EMBED_FALLBACK, False)]
+
+        for name, local_only in candidates:
             if not name:
                 continue
             try:
@@ -151,8 +163,16 @@ class Embedder:
                 if not _smoke_test(m, cfg.EMBED_DIM):
                     log.warning(f"{name} produced an unexpected vector shape")
                     continue
-                _model, _model_name = m, name
-                log.info(f"Embedder ready: {name} ({cfg.EMBED_DIM}-dim, {_device})")
+                # Report the CANONICAL model id, never the folder path. The
+                # manifest records which embedder built the index, and the
+                # retriever refuses to search on a mismatch — loading the same
+                # weights from a vendored directory must not look like a
+                # different model.
+                _model = m
+                _model_name = cfg.EMBED_MODEL if name == vendored else name
+                where = "vendored" if name == vendored else name
+                log.info(f"Embedder ready: {_model_name} ({cfg.EMBED_DIM}-dim, "
+                         f"{_device}, from {where})")
                 return _model
             except Exception as e:
                 # A local cache miss is expected and routine; only a failed

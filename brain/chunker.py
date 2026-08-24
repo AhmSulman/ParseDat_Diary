@@ -31,17 +31,25 @@ character. Recording pre-strip offsets would silently corrupt every merge.
 import re
 
 from config.config import Config
-from core.normalize import page_offsets
+from core.normalize import heading_offsets, page_offsets
 
 # Break points, best first: paragraph, line, then sentence enders.
 _SEPARATORS = ["\n\n", "\n", ". ", "! ", "? "]
+
+# For markdown, a heading is the strongest boundary available: breaking there
+# keeps a chunk inside one section instead of straddling two unrelated topics,
+# which is what makes .md retrieval coherent instead of mushy.
+_MD_SEPARATORS = ["\n# ", "\n## ", "\n### ", "\n#### ",
+                  "\n\n", "\n", ". ", "! ", "? "]
 
 _PAGE_MARKER = re.compile(r"-{2,}\s*Page\s+\d+[^\n]*?-{2,}")
 
 
 class Chunker:
-    def __init__(self, chunk_size: int | None = None, overlap: int | None = None):
+    def __init__(self, chunk_size: int | None = None, overlap: int | None = None,
+                 markdown: bool = False):
         cfg = Config()
+        self.markdown = markdown
         self.chunk_size = chunk_size if chunk_size is not None else cfg.CHUNK_SIZE
         self.overlap = overlap if overlap is not None else cfg.CHUNK_OVERLAP
 
@@ -71,7 +79,7 @@ class Chunker:
             # chunk ends at a paragraph or sentence rather than mid-word.
             if end < n:
                 floor = start + self.chunk_size // 2
-                for sep in _SEPARATORS:
+                for sep in (_MD_SEPARATORS if self.markdown else _SEPARATORS):
                     pos = text.rfind(sep, floor, end)
                     if pos != -1:
                         end = pos + len(sep)
@@ -119,6 +127,23 @@ class Chunker:
         page_pos = [p[0] for p in pages]
         page_num = [p[1] for p in pages]
 
+        # Markdown has no pages; its locator is the nearest heading above.
+        heads = heading_offsets(text) if self.markdown else []
+        head_pos = [h[0] for h in heads]
+        head_txt = [h[1] for h in heads]
+
+        def section_at(offset: int) -> str | None:
+            if not head_pos or offset < head_pos[0]:
+                return None
+            lo, hi = 0, len(head_pos) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if head_pos[mid] <= offset:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return head_txt[lo]
+
         def page_at(offset: int) -> int | None:
             """Page whose marker most recently preceded `offset`."""
             if not page_pos:
@@ -155,6 +180,7 @@ class Chunker:
                 "char_end": c_end,
                 "page_start": page_at(c_start),
                 "page_end": page_at(max(c_start, c_end - 1)),
+                "section": section_at(c_start),
             })
 
         total = len(rows)

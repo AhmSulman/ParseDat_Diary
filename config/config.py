@@ -27,7 +27,7 @@ class Config:
     LOG_FILE: str          = _p("logs", "app.log")
 
     # LLM (Local Language Model)
-    LLM_MODEL_PATH: str    = _p("data", "models", "mistral-7b-instruct-v0.2.Q4_K_M.gguf")
+    LLM_MODEL_PATH: str    = _p("data", "models", "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf")
     LLM_GPU_LAYERS: int    = 35        # Layers on RTX 4050 VRAM (0 = CPU only)
     LLM_CONTEXT_SIZE: int  = 8192      # Extended context window
     LLM_MAX_TOKENS: int    = -1        # -1 = no limit (model stops on its own)
@@ -70,6 +70,12 @@ class Config:
     # machine".
     #
     # So: never enable trust_remote_code here without accepting both costs.
+    # A VENDORED COPY of the weights, inside the project. Preferred over the
+    # hub id because a filesystem path skips HuggingFace's resolution entirely:
+    # no repo lookup, no etag check, no dependence on ~/.cache surviving. If
+    # this folder is missing, the loader falls back to EMBED_MODEL below and
+    # will use the user cache (or download once).
+    EMBED_LOCAL_DIR: str   = _p("data", "models", "embedder", "bge-base-en-v1.5")
     EMBED_MODEL: str       = "BAAI/bge-base-en-v1.5"
     EMBED_FALLBACK: str    = "sentence-transformers/all-mpnet-base-v2"  # 768-d, no remote code
     EMBED_TRUST_REMOTE_CODE: bool = False

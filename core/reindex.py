@@ -27,6 +27,7 @@ from brain.retriever import Retriever
 from config.config import Config
 from core.normalize import normalize
 from core.quality import score
+from core.sources import is_markdown, list_sources
 from logs.logger import log
 from storage.checkpoint import Checkpoint
 from storage.exporter import Exporter
@@ -58,9 +59,8 @@ def reindex(device: str = "cuda") -> dict:
     # Settings are written AFTER the first batch, once the embedder has actually
     # resolved — see the note before manifest.save() below.
 
-    os.makedirs(cfg.INPUT_DIR, exist_ok=True)
     # data/input, never data/txt — see module docstring.
-    pdfs = sorted(f for f in os.listdir(cfg.INPUT_DIR) if f.lower().endswith(".pdf"))
+    pdfs = list_sources(cfg.INPUT_DIR)
 
     stats = {
         "indexed": 0, "chunks": 0, "quarantined": 0,
@@ -82,14 +82,15 @@ def reindex(device: str = "cuda") -> dict:
 
             text = normalize(raw)          # idempotent: no-op if already clean
 
-            report = score(text)
+            report = score(text, not pdf.lower().endswith(".pdf"))
             if not report.passed:
                 exporter.quarantine(pdf, text, report)
                 checkpoint.mark_failed(pdf)
                 stats["quarantined"] += 1
                 continue
 
-            rows = chunker.chunk_with_meta(text, pdf, book_id=book_id)
+            md = Chunker(markdown=True) if is_markdown(pdf) else chunker
+            rows = md.chunk_with_meta(text, pdf, book_id=book_id)
             if not rows:
                 stats["failed"].append(pdf)
                 continue

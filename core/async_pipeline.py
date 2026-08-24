@@ -42,6 +42,7 @@ from core.extract_text import TextExtractor
 from core.gpu_ocr import GPUOCRBatch
 from core.normalize import normalize
 from core.quality import score
+from core.sources import is_markdown, is_pdf, list_sources, read_text_source
 from logs.logger import log
 from storage.checkpoint import Checkpoint
 from storage.exporter import Exporter
@@ -146,6 +147,18 @@ class AsyncPipeline:
                 sha = ""
 
             try:
+                if not is_pdf(pdf_name):
+                    # Already text: reading it through PyMuPDF and Tesseract
+                    # would be pointless and lossy. Hand it straight to the
+                    # writer with no pages and no OCR.
+                    body = await asyncio.to_thread(read_text_source, path)
+                    log.info(f"Queued: {pdf_name} (text, {len(body):,} chars)")
+                    await self.write_queue.put({
+                        "name": pdf_name, "text": body,
+                        "pages": 0, "sha256": sha,
+                    })
+                    continue
+
                 doc = await asyncio.to_thread(fitz.open, path)
                 pages = list(doc)
                 log.info(f"Queued: {pdf_name} ({len(pages)} pages)")
@@ -229,7 +242,7 @@ class AsyncPipeline:
             try:
                 text = normalize(job["text"])
 
-                report = await asyncio.to_thread(score, text)
+                report = await asyncio.to_thread(score, text, not is_pdf(name))
                 if not report.passed:
                     # Discarded, not repaired: quality over coverage.
                     await asyncio.to_thread(
@@ -256,7 +269,11 @@ class AsyncPipeline:
 
             name = job["name"]
             try:
-                rows = self.chunker.chunk_with_meta(
+                # Markdown gets heading-aware chunking and section locators;
+                # a .md file has no pages to cite.
+                chunker = (Chunker(markdown=True) if is_markdown(name)
+                           else self.chunker)
+                rows = chunker.chunk_with_meta(
                     job["text"], name, book_id=self.manifest.book_count
                 )
                 if not rows:
@@ -292,8 +309,4 @@ class AsyncPipeline:
                 self._stats["failed"] += 1
 
     def _list_pdfs(self) -> list:
-        os.makedirs(self.cfg.INPUT_DIR, exist_ok=True)
-        return sorted(
-            f for f in os.listdir(self.cfg.INPUT_DIR)
-            if f.lower().endswith(".pdf")
-        )
+        return list_sources(self.cfg.INPUT_DIR)

@@ -188,15 +188,10 @@ class RAGPipeline:
         if check["cited"]:
             yield "\n\nReferences:"
             for n in check["cited"]:
-                p = passages[n - 1]
-                ps, pe = p.get("page_start"), p.get("page_end")
-                if ps and pe and ps != pe:
-                    loc = f", p.{ps}-{pe}"
-                elif ps:
-                    loc = f", p.{ps}"
-                else:
-                    loc = ""
-                yield f"\n  [{n}] {p.get('source', 'unknown')}{loc}"
+                # locate() handles both: a page for PDFs, the nearest heading
+                # for markdown, which has no pages to cite.
+                from brain.llm import locate
+                yield chr(10) + f"  [{n}] {locate(passages[n - 1])}"
 
         if check["invalid"]:
             bad = ", ".join(f"[{n}]" for n in check["invalid"])
