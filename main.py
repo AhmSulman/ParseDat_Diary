@@ -19,6 +19,22 @@ import os
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Cap BLAS thread pools BEFORE numpy / torch / faiss are imported.
+#
+# OpenBLAS allocates per-thread scratch buffers from a fixed pool. The GUI runs
+# the RAG pipeline on a worker thread while Kivy drives the main loop, and
+# numpy, faiss and torch all sit on the same OpenBLAS, so the pool is exhausted
+# and every allocation fails:
+#     OpenBLAS error: Memory allocation still failed after 10 retries
+# It looks like an out-of-memory failure and is not — it happened with 4.5 GB
+# free. Setting these after the import has no effect; the pool is sized at load.
+# OPENBLAS must be 1: 4 still aborted. The GUI only ever runs BLAS on single
+# vectors (one query embedding, one FAISS probe), so 1 thread costs nothing
+# measurable, while the abort was fatal and killed the process outright.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")
+
 # Windows: force UTF-8 so box-drawing chars in the banner don't crash
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
