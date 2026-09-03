@@ -28,8 +28,10 @@ from kivy.core.window import Window
 
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.label import MDLabel
 from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.snackbar import Snackbar
+from kivymd.uix.textfield import MDTextField
 
 from config.config import Config
 from logs.logger import log
@@ -82,6 +84,7 @@ class MaanMaterialRoot(MDBoxLayout):
     active_embedder_label = StringProperty("—")
     model_list_text       = StringProperty("")
     dl_status             = StringProperty("")
+    settings_save_status  = StringProperty("")
 
     # Category management
     active_category    = StringProperty("All PDFs")
@@ -96,6 +99,7 @@ class MaanMaterialRoot(MDBoxLayout):
         self._preview_ticket = 0
         self._ask_busy = False
         self._file_chooser_popup = None
+        self._settings_inputs: dict = {}
 
         from storage.categories import CategoryManager
         self._cats = CategoryManager()
@@ -660,6 +664,207 @@ class MaanMaterialRoot(MDBoxLayout):
         else:
             self.model_list_text = "  (none yet — use Download buttons)"
 
+        self.build_settings_form()
+
+    # ── Settings: full parameter form ───────────────────────────────────────────
+    def build_settings_form(self):
+        """
+        Render the settings form from SETTINGS_SCHEMA — one row per Config
+        field, grouped, prefilled with the currently effective value.
+
+        Built in Python rather than laid out in the .kv: the schema is the
+        single source of truth for what's tunable, so a field added there
+        shows up here with no KV edit.
+        """
+        box = self.ids.get("settings_form_box")
+        if box is None:
+            return
+        box.clear_widgets()
+        self._settings_inputs = {}
+
+        from config.settings_store import SETTINGS_SCHEMA
+
+        cfg = Config()
+        restart_tag = {
+            "server": "  ·  restart server",
+            "reindex": "  ·  needs reindex",
+            "app": "  ·  restart MAAN",
+            None: "",
+        }
+
+        seen_groups: list[str] = []
+        for f in SETTINGS_SCHEMA:
+            if f["group"] not in seen_groups:
+                seen_groups.append(f["group"])
+                box.add_widget(MDLabel(
+                    text=f["group"],
+                    font_style="Overline", bold=True,
+                    theme_text_color="Custom",
+                    text_color=(0.76, 0.52, 1, 1),
+                    adaptive_height=True,
+                    size_hint_y=None, height=dp(28),
+                ))
+
+            row = MDBoxLayout(
+                orientation="horizontal", spacing=dp(8),
+                size_hint_y=None, height=dp(44),
+            )
+            row.add_widget(MDLabel(
+                text=f["label"] + restart_tag.get(f["restart"], ""),
+                theme_text_color="Secondary", font_style="Caption",
+                size_hint_x=0.55, adaptive_height=True,
+            ))
+            value = getattr(cfg, f["key"], f.get("default", ""))
+            ti = MDTextField(
+                text=str(value), size_hint_x=0.45, height=dp(40),
+                mode="rectangle",
+            )
+            self._settings_inputs[f["key"]] = ti
+            row.add_widget(ti)
+            box.add_widget(row)
+
+    def on_save_all_settings(self):
+        """
+        Validate every field, persist only what differs from the hardcoded
+        default (data/settings.json stays a diff, not a full snapshot), and
+        hot-apply the subset that's safe to change on a live pipeline.
+        """
+        from config.settings_store import (
+            SETTINGS_SCHEMA, validate, validate_patch, restart_labels,
+            load_overlay, save_overlay,
+        )
+
+        cfg = Config()
+        current_effective = {f["key"]: getattr(cfg, f["key"]) for f in SETTINGS_SCHEMA}
+        class_defaults = {f["key"]: getattr(Config, f["key"]) for f in SETTINGS_SCHEMA}
+
+        candidate = dict(current_effective)
+        errors = []
+        for f in SETTINGS_SCHEMA:
+            key = f["key"]
+            widget = self._settings_inputs.get(key)
+            if widget is None:
+                continue
+            ok, err, value = validate(key, widget.text)
+            if not ok:
+                errors.append(f"{f['label']}: {err}")
+                continue
+            candidate[key] = value
+
+        errors.extend(validate_patch(candidate, current_effective))
+
+        if errors:
+            more = f" (+{len(errors) - 2} more)" if len(errors) > 2 else ""
+            self._toast("Fix: " + "; ".join(errors[:2]) + more)
+            self.settings_save_status = "Not saved — " + "; ".join(errors[:3]) + more
+            return
+
+        overlay = load_overlay()
+        changed_keys = []
+        for f in SETTINGS_SCHEMA:
+            key = f["key"]
+            new_val = candidate[key]
+            if new_val == class_defaults[key]:
+                if key in overlay:
+                    del overlay[key]
+                    changed_keys.append(key)
+            elif overlay.get(key) != new_val:
+                overlay[key] = new_val
+                changed_keys.append(key)
+        save_overlay(overlay)
+
+        if not changed_keys:
+            self.settings_save_status = "No changes."
+            return
+
+        self._hot_apply_settings(candidate, changed_keys)
+
+        grouped = restart_labels(changed_keys)
+        parts = []
+        if grouped.get("reindex"):
+            parts.append(f"run reindex ({', '.join(grouped['reindex'])})")
+        if grouped.get("app"):
+            parts.append(f"restart MAAN ({', '.join(grouped['app'])})")
+
+        msg = f"Saved {len(changed_keys)} setting(s)."
+        if parts:
+            msg += "  Still needed: " + "; ".join(parts)
+        self.settings_save_status = msg
+        self._toast(msg[:220])
+
+        # llama-server is the one thing worth relaunching automatically: it's
+        # a background process this app already owns (ServerManager), so
+        # there's no reason to make the user taskkill + retype the launch
+        # command from CLAUDE.md by hand every time GPU layers/context/
+        # threads/batch/binary path change.
+        if grouped.get("server"):
+            self._auto_restart_llama_server(grouped["server"])
+
+    def _auto_restart_llama_server(self, changed_keys: list[str]):
+        """Relaunch llama-server on the currently active model, with the values
+        just saved, in the background."""
+        from brain.server_manager import get_manager
+
+        app = self._app
+        rag = getattr(app, "rag", None) if app else None
+        model_path = (getattr(getattr(rag, "llm", None), "model_path", None)
+                      or Config().LLM_MODEL_PATH)
+        if not model_path or not os.path.exists(model_path):
+            self.settings_save_status += "  (no model loaded yet — server " \
+                                          "settings will apply on next start)"
+            return
+
+        self.settings_save_status = (
+            f"Restarting llama-server ({', '.join(changed_keys)})…")
+
+        def job():
+            mgr = get_manager()
+            ok, msg = mgr.start(model_path)
+            Clock.schedule_once(lambda *_: self._server_restarted(ok, msg), 0)
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _server_restarted(self, ok: bool, msg: str):
+        if ok:
+            self.settings_save_status = f"llama-server restarted: {msg}"
+            self._toast("llama-server restarted with the new settings.")
+            app = self._app
+            if app and getattr(app, "rag", None) is not None:
+                try:
+                    app.rag.llm.load()
+                except Exception as ex:
+                    log.warning(f"Backend reconnect after restart: {ex}")
+        else:
+            self.settings_save_status = f"llama-server restart failed: {msg}"
+            self._toast(f"Restart failed: {msg[:150]}")
+
+    def _hot_apply_settings(self, candidate: dict, changed_keys: list[str]):
+        """
+        Patch the live RAGPipeline for the handful of fields it's safe to
+        change without restarting anything — everything else is read once at
+        construction time and genuinely needs the restart the UI names.
+        """
+        app = self._app
+        rag = getattr(app, "rag", None) if app else None
+        if rag is None:
+            return
+
+        hot = {
+            "SEARCH_TOP_K": lambda v: setattr(rag, "top_k", v),
+            "CONTEXT_CHAR_BUDGET": lambda v: setattr(rag, "char_budget", v),
+            "NEIGHBOR_RADIUS": lambda v: setattr(rag.retriever.cfg, "NEIGHBOR_RADIUS", v),
+            "LLM_TEMPERATURE": lambda v: setattr(rag.llm, "temperature", v),
+            "LLM_MAX_TOKENS": lambda v: setattr(rag.llm, "max_tokens", v),
+        }
+        for key in changed_keys:
+            fn = hot.get(key)
+            if fn is None:
+                continue
+            try:
+                fn(candidate[key])
+            except Exception as e:
+                log.warning(f"Hot-apply {key} failed: {e}")
+
     def on_select_model(self, filename: str):
         """
         Actually load a different .gguf, by restarting llama-server on it.
@@ -685,7 +890,8 @@ class MaanMaterialRoot(MDBoxLayout):
             self._toast(f"Cannot load: {why}")
             return
 
-        cfg.__class__.LLM_MODEL_PATH = full_path
+        from config.settings_store import update_overlay
+        update_overlay({"LLM_MODEL_PATH": full_path})
         self.active_model_label = f"{filename}  (loading…)"
         self._toast(f"Loading {filename}… this takes a minute.")
 
@@ -808,9 +1014,9 @@ class MaanMaterialRoot(MDBoxLayout):
         instead of the old "re-ingest for it to take effect".
         """
         import brain.embedder as emb_mod
+        from config.settings_store import update_overlay
 
-        Config.EMBED_MODEL = name
-        Config.EMBED_DIM = dim
+        update_overlay({"EMBED_MODEL": name, "EMBED_DIM": dim})
         emb_mod._model = None           # force a lazy reload on next use
         emb_mod._model_name = None
         self.active_embedder_label = label

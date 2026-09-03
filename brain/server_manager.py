@@ -173,18 +173,26 @@ class ServerManager:
         self.model_path = None
 
     def start(self, model_path: str, *, ctx: int | None = None,
-              n_gpu_layers: int | None = None, threads: int = 12,
+              n_gpu_layers: int | None = None, threads: int | None = None,
               wait: float = 240.0) -> tuple[bool, str]:
         """
         Start llama-server on `model_path`, replacing any server we own.
 
         Returns (ok, message). Never raises on a bad model — the caller is
         usually a UI callback.
+
+        Reads a FRESH Config() for any of ctx/n_gpu_layers/threads/batch the
+        caller leaves unset, rather than self.cfg captured at __init__. This
+        manager is a process-wide singleton (get_manager()) that can live for
+        the whole GUI session, so self.cfg would otherwise still hold whatever
+        was configured when the app started — a Settings-screen change would
+        save correctly but a "restart server" would silently relaunch with the
+        stale values.
         """
         exe = find_server_binary()
         if not exe:
             return False, ("llama-server not found. Set LLAMA_SERVER_BIN in "
-                           "config/config.py to its full path.")
+                           "the Settings screen (or config/config.py).")
 
         ok, why = self.can_load(model_path)
         if not ok:
@@ -195,11 +203,14 @@ class ServerManager:
             return False, (f"port {self.port} is already in use by another "
                            f"llama-server. Stop it first.")
 
-        ctx = ctx or self.cfg.LLM_CONTEXT_SIZE
-        ngl = self.cfg.LLM_GPU_LAYERS if n_gpu_layers is None else n_gpu_layers
+        cfg = self.cfg = Config()      # refresh: overlay may have changed since __init__
+        ctx = ctx or cfg.LLM_CONTEXT_SIZE
+        ngl = cfg.LLM_GPU_LAYERS if n_gpu_layers is None else n_gpu_layers
+        threads = threads if threads is not None else cfg.LLM_N_THREADS
+        batch = cfg.LLM_N_BATCH
 
         cmd = [exe, "-m", model_path, "-c", str(ctx), "-ngl", str(ngl),
-               "-t", str(threads), "-tb", str(threads),
+               "-t", str(threads), "-tb", str(threads), "-b", str(batch),
                "--port", str(self.port), "--host", "127.0.0.1"]
 
         log_path = os.path.join(os.path.dirname(os.path.dirname(

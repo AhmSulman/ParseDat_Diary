@@ -1,10 +1,16 @@
 """
 MAAN Configuration -- All Settings in One Place
 ================================================
-Edit this file to customize MAAN's behaviour.
+Class attributes below are the hardcoded defaults. A GUI-editable overlay
+in data/settings.json (see config/settings_store.py) layers on top of them
+at construction time -- Config() picks up whatever the user last saved in
+the Settings screen. Edit this file to change a DEFAULT; use the Settings
+screen (or delete data/settings.json) to change what is actually running.
 """
 
 import os
+
+from config.settings_store import load_overlay
 
 # Project root is two levels up from this file (config/config.py -> root)
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,6 +91,10 @@ class Config:
     # offload without building anything.
     LLM_BACKEND: str       = "auto"
     LLM_SERVER_URL: str    = "http://127.0.0.1:8084"
+    # Explicit llama-server.exe path. Blank = auto-detect via the candidate
+    # dirs in brain/server_manager.py. Set this from the Settings screen
+    # instead of hardcoding a path in source.
+    LLAMA_SERVER_BIN: str  = ""
     # Headroom left for the answer. Generous because reasoning models spend
     # 500-2000 tokens inside <think> before writing a word of the answer.
     LLM_ANSWER_RESERVE: int = 1500
@@ -97,8 +107,18 @@ class Config:
     CONTEXT_CHAR_BUDGET: int = 20000   # hard cap on assembled context
 
     # Web Server
-    SERVER_HOST: str       = "0.0.0.0"
+    # 127.0.0.1, not 0.0.0.0: the admin routes (clean, sync) can delete
+    # library files. The old 0.0.0.0 default exposed them to the whole
+    # network with no warning. Open it up explicitly via the Settings
+    # screen if you actually want LAN access.
+    SERVER_HOST: str       = "127.0.0.1"
     SERVER_PORT: int       = 8000
 
     # CPU
     CPU_WORKERS: int       = max(1, (os.cpu_count() or 2) // 2)
+
+    # ── Settings overlay ─────────────────────────────────────────────────
+    def __init__(self):
+        for key, value in load_overlay().items():
+            if hasattr(self.__class__, key):
+                setattr(self, key, value)

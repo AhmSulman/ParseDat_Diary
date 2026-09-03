@@ -72,3 +72,6 @@ data/models/embedder/
 
 # Conversation history is personal
 data/sessions/
+
+# Per-machine settings overlay written by the Settings screen
+data/settings.json
