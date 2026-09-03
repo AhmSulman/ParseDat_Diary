@@ -20,9 +20,26 @@ offload, and it exposes -ngl / -ctk / -ctv for the memory tuning this box needs.
 INTERFACE COMPATIBILITY
 -----------------------
 This deliberately mirrors brain/llm.py::LocalLLM — `load()`, `is_loaded()`,
-`generate(prompt, stream=True)`, plus the inherited `build_rag_prompt()` and
-`validate_citations()`. brain/rag.py therefore needs no changes: it already
-consumes a streaming generator, and all the citation work carries over.
+`generate(messages, stream=True)`, plus the inherited `build_rag_messages()`
+and `validate_citations()`. brain/rag.py therefore needs no changes: it
+already consumes a streaming generator, and all the citation work carries
+over.
+
+USES /v1/chat/completions, NOT /completion
+-------------------------------------------
+This used to POST to /completion with a single prompt string pre-formatted
+by build_rag_prompt() as a hardcoded Mistral-style [INST]...[/INST] block,
+specifically to avoid a chat endpoint "wrapping it in a second template and
+corrupting the citation instructions". That reasoning was backwards: the
+chat endpoint doesn't wrap content in an unrelated second template, it
+renders the GGUF's OWN embedded chat template (tokenizer.chat_template) —
+the one the model was actually trained on. The configured model
+(DeepSeek-R1-Distill-Qwen-7B) uses <|User|>/<|Assistant|>, nothing like
+[INST]; sending it Mistral's literal tokens as text measurably produced a
+malformed, unpaired </think> and a shallow answer that ignored the supplied
+excerpt (see brain/llm.py's generate() docstring for the side-by-side).
+/v1/chat/completions lets llama-server render the model's real template
+instead of us guessing one.
 """
 
 from __future__ import annotations
@@ -122,13 +139,12 @@ class LlamaServerLLM(LocalLLM):
         return self._ready
 
     # ── generation ────────────────────────────────────────────────────────────
-    def generate(self, prompt: str, stream: bool = True):
+    def generate(self, messages: list[dict], stream: bool = True):
         """
-        Yield answer tokens from llama-server.
-
-        Uses the /completion endpoint rather than the chat API: the prompt is
-        already fully formatted by build_rag_prompt(), and a chat endpoint would
-        wrap it in a second template, corrupting the citation instructions.
+        Yield answer tokens from llama-server, via its OpenAI-compatible chat
+        endpoint so the model's own chat template gets applied — see the
+        module docstring for why this replaced /completion + a hand-built
+        prompt string.
         """
         if not self._ready:
             yield "Model server not reachable. Start llama-server, then retry."
@@ -141,10 +157,9 @@ class LlamaServerLLM(LocalLLM):
             return
 
         payload = {
-            "prompt": prompt,
-            "n_predict": self.max_tokens if self.max_tokens and self.max_tokens > 0 else -1,
+            "messages": messages,
+            "max_tokens": self.max_tokens if self.max_tokens and self.max_tokens > 0 else -1,
             "temperature": self.temperature,
-            "stop": ["</s>", "[INST]", "User:", "\n\nQuestion:"],
             "stream": bool(stream),
             "cache_prompt": True,
         }
@@ -152,12 +167,13 @@ class LlamaServerLLM(LocalLLM):
         try:
             with httpx.Client(timeout=self.timeout) as c:
                 if not stream:
-                    r = c.post(f"{self.base_url}/completion", json=payload)
+                    r = c.post(f"{self.base_url}/v1/chat/completions", json=payload)
                     r.raise_for_status()
-                    yield r.json().get("content", "")
+                    msg = r.json()["choices"][0]["message"]
+                    yield msg.get("content") or ""
                     return
 
-                with c.stream("POST", f"{self.base_url}/completion", json=payload) as r:
+                with c.stream("POST", f"{self.base_url}/v1/chat/completions", json=payload) as r:
                     r.raise_for_status()
                     for line in r.iter_lines():
                         if not line or not line.startswith("data: "):
@@ -169,10 +185,11 @@ class LlamaServerLLM(LocalLLM):
                             chunk = json.loads(body)
                         except json.JSONDecodeError:
                             continue
-                        token = chunk.get("content", "")
+                        choice = (chunk.get("choices") or [{}])[0]
+                        token = (choice.get("delta") or {}).get("content") or ""
                         if token:
                             yield token
-                        if chunk.get("stop"):
+                        if choice.get("finish_reason"):
                             break
         except Exception as e:
             log.error(f"llama-server generation failed: {str(e)[:200]}")

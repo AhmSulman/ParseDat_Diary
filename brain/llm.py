@@ -86,13 +86,35 @@ class LocalLLM:
     def is_loaded(self) -> bool:
         return self._llm is not None
 
-    def generate(self, prompt: str, stream: bool = True):
+    def generate(self, messages: list[dict], stream: bool = True):
         """
-        Generate a response to the prompt.
+        Generate a response to a chat-formatted message list.
 
         Args:
-            prompt:  Full prompt string (system + context + question)
-            stream:  If True, yields text tokens as they are generated (live output)
+            messages: [{"role": "system"/"user", "content": ...}, ...] — see
+                      build_rag_messages(). Passed to llama-cpp-python's
+                      create_chat_completion(), which renders the GGUF's own
+                      embedded chat template (tokenizer.chat_template) rather
+                      than a hardcoded one.
+
+                      This used to take a single pre-formatted prompt string
+                      wrapped in a hardcoded Mistral-style [INST]...[/INST]
+                      template, applied regardless of which model was actually
+                      loaded. Measured against the configured model
+                      (DeepSeek-R1-Distill-Qwen-7B, architecture qwen2, real
+                      template uses <|User|>/<|Assistant|>): the [INST] format
+                      produced a malformed, unpaired </think> with the real
+                      answer discarded as "reasoning" by the stripper, and a
+                      shallow response that skipped engaging with the excerpt.
+                      The model's own template produced a correctly paired
+                      <think>...</think> block that specifically reasoned from
+                      the supplied excerpt. Same fix generalizes to every other
+                      model this app lists as supported (Mistral, Phi-2,
+                      Llama-2, OpenChat) — each has a different native format,
+                      and hardcoding one meant every model but a Mistral
+                      Instruct build was silently mismatched.
+
+            stream:   If True, yields text tokens as they are generated (live output)
 
         Yields (stream=True): str tokens
         Returns (stream=False): str full response
@@ -101,32 +123,35 @@ class LocalLLM:
             yield "❌ Model not loaded. Run: python main.py chat --model path/to/model.gguf"
             return
 
+        max_tokens = None if self.max_tokens is None or self.max_tokens < 0 else self.max_tokens
+
         try:
-            output = self._llm(
-                prompt,
-                max_tokens=self.max_tokens,   # -1 = no hard cap
+            output = self._llm.create_chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,        # None = no hard cap
                 temperature=self.temperature,
-                stop=["</s>", "[INST]", "User:", "\n\nQuestion:"],
                 stream=stream,
-                echo=False,
             )
 
             if stream:
                 for chunk in output:
-                    token = chunk["choices"][0]["text"]
-                    yield token
+                    delta = chunk["choices"][0].get("delta", {})
+                    token = delta.get("content") or ""
+                    if token:
+                        yield token
             else:
-                yield output["choices"][0]["text"]
+                yield output["choices"][0]["message"]["content"]
 
         except Exception as e:
             yield f"⚠️  Generation error: {e}"
 
-    def build_rag_prompt(self, question: str, context_chunks: list[dict],
-                         library_titles: list[str] | None = None,
-                         char_budget: int | None = None) -> str:
+    def build_rag_messages(self, question: str, context_chunks: list[dict],
+                           library_titles: list[str] | None = None,
+                           char_budget: int | None = None) -> list[dict]:
         """
-        Build the RAG prompt: grounded library header, numbered sources with page
-        spans, and an instruction to cite inline.
+        Build the RAG chat messages: a system message with the grounded library
+        header, numbered sources with page spans, and citation rules, plus the
+        user's question as its own message.
 
         Two changes that matter:
 
@@ -140,6 +165,10 @@ class LocalLLM:
            have?" was previously unanswerable — nothing ever told the model. It
            guessed. ~200 tokens of header removes an entire class of
            hallucination.
+
+        Returns messages, not a formatted string — see generate()'s docstring
+        for why: the model's own chat template renders these, instead of a
+        hardcoded format that only matched one specific model family.
         """
         budget = char_budget or Config().CONTEXT_CHAR_BUDGET
 
@@ -167,7 +196,7 @@ class LocalLLM:
 
         context_text = "".join(parts)
 
-        return f"""[INST] You are MAAN. You answer questions using only the book excerpts provided below.
+        system = f"""You are MAAN. You answer questions using only the book excerpts provided below.
 
 {header}RULES:
 - Use ONLY the numbered excerpts below. Do not add outside knowledge.
@@ -179,10 +208,12 @@ class LocalLLM:
 - Answer fully. Do not truncate.
 
 EXCERPTS:
-{context_text}
+{context_text}"""
 
-QUESTION: {question} [/INST]
-ANSWER: """
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question},
+        ]
 
     @staticmethod
     def validate_citations(answer: str, n_sources: int) -> dict:

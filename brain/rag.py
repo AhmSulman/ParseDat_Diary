@@ -107,7 +107,7 @@ class RAGPipeline:
         )
         log.info(f"{len(passages)} passages from {len({p['source'] for p in passages})} book(s)")
 
-        prompt = self.llm.build_rag_prompt(question, passages, library_titles=titles)
+        messages = self.llm.build_rag_messages(question, passages, library_titles=titles)
 
         # Reasoning models emit <think>...</think> before answering. That is
         # working-out, not the answer: it must not be shown as prose, and it
@@ -130,7 +130,7 @@ class RAGPipeline:
         ticks = 0
         PROBE_LIMIT = 6000         # chars held before concluding "no reasoning"
 
-        for token in self.llm.generate(prompt, stream=stream):
+        for token in self.llm.generate(messages, stream=stream):
             collected.append(token)
 
             if state == "plain":
