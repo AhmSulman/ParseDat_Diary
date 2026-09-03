@@ -272,9 +272,15 @@ class ServerManager:
             import httpx
             with httpx.Client(timeout=5.0) as c:
                 data = c.get(f"http://127.0.0.1:{self.port}/v1/models").json()
-            items = data.get("data") or []
+            # Two shapes in the wild: OpenAI's {"data":[{"id":...}]} and
+            # llama-server's own {"models":[{"model":...,"name":...}]}. Reading
+            # only the first meant this returned None against the build actually
+            # installed, so the GUI's "loaded model" indicator was always blank.
+            items = data.get("data") or data.get("models") or []
             if items:
-                return os.path.basename(str(items[0].get("id", "")).replace("\\", "/"))
+                first = items[0]
+                ident = first.get("id") or first.get("model") or first.get("name") or ""
+                return os.path.basename(str(ident).replace("\\", "/"))
         except Exception:
             pass
         return None

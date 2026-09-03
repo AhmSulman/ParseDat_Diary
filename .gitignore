@@ -79,3 +79,6 @@ data/settings.json
 # llama.cpp binaries dropped into the project (4.5 GB) - found at runtime
 llama-*-bin-*/
 llama.cpp/
+
+# Download staging for llama.cpp release zips
+.dl/
