@@ -34,9 +34,26 @@ _CANDIDATE_DIRS = [
 ]
 _EXE = "llama-server.exe" if os.name == "nt" else "llama-server"
 
-# Free RAM that must remain AFTER the model is resident, in MB. Below this
-# Windows starts thrashing and the UI stops responding.
-_RAM_FLOOR_MB = 2500
+# Commit that must remain available AFTER the model is resident, in MB.
+#
+# COMMIT, NOT FREE PHYSICAL RAM. Windows refuses an allocation when the commit
+# charge reaches the commit limit (RAM + pagefile), and that is what actually
+# fires — measured on this machine: 10,853 MB physically free while only
+# 6,039 MB of commit remained available, with six Resource-Exhaustion (2004)
+# events already logged. Guarding on free RAM believed in 4.8 GB of headroom
+# that did not exist, almost exactly the size of a 7B model.
+_COMMIT_FLOOR_MB = 2500
+
+# Runtime cost beyond the weights: compute buffers, the graph, the process.
+_RUNTIME_OVERHEAD_MB = 600
+
+# KV cache allowance per 8k of context, in MB. Deliberately the WORST case
+# measured across the models in use rather than an average: Qwen3-4B carries
+# 36 layers x 8 KV heads = 1,152 MB at 8k f16, MORE than the 7B's 448 MB
+# despite being half its size. A flat allowance under-counted it by ~800 MB.
+# Being conservative means refusing a marginal load, which is the correct
+# failure for a machine whose alternative is a frozen desktop.
+_KV_WORST_MB_PER_8K = 1200
 
 
 def find_server_binary() -> str | None:
@@ -65,8 +82,16 @@ def port_open(port: int, host: str = "127.0.0.1", timeout: float = 1.5) -> bool:
         s.close()
 
 
-def free_ram_mb() -> int | None:
-    """Free physical memory, or None if it cannot be determined."""
+def memory_status() -> dict | None:
+    """
+    Physical AND commit availability in MB, or None if it cannot be read.
+
+    ullAvailPageFile is Windows' "available commit" despite the name — it is
+    commit limit minus commit charge, not free space in pagefile.sys. It is the
+    number that decides whether an allocation succeeds, so it is the number the
+    guard compares against. The old code read this struct and then returned
+    only ullAvailPhys, throwing the useful field away.
+    """
     try:
         import ctypes
 
@@ -84,7 +109,32 @@ def free_ram_mb() -> int | None:
         st = _MS()
         st.dwLength = ctypes.sizeof(_MS)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
-            return int(st.ullAvailPhys / (1024 * 1024))
+            mb = 1024 * 1024
+            return {
+                "phys_free_mb": int(st.ullAvailPhys / mb),
+                "commit_free_mb": int(st.ullAvailPageFile / mb),
+                "commit_limit_mb": int(st.ullTotalPageFile / mb),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def free_ram_mb() -> int | None:
+    """Free physical memory, or None. Kept for callers that only want RAM."""
+    st = memory_status()
+    return st["phys_free_mb"] if st else None
+
+
+def free_vram_mb() -> int | None:
+    """Free VRAM via nvidia-smi, or None when there is no NVIDIA GPU."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return int(out.stdout.strip().splitlines()[0])
     except Exception:
         pass
     return None
@@ -126,39 +176,84 @@ class ServerManager:
         return None
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
-    def can_load(self, model_path: str) -> tuple[bool, str]:
+    # Seams so the guard can be tested without a real file or a real machine.
+    def _exists(self, path: str) -> bool:
+        return os.path.exists(path)
+
+    def _size_mb(self, path: str) -> float:
+        return os.path.getsize(path) / (1024 * 1024)
+
+    def _cost_mb(self, path: str, ctx: int) -> float:
+        """Commit this model will charge: weights + KV for `ctx` + runtime."""
+        return (self._size_mb(path)
+                + _KV_WORST_MB_PER_8K * (ctx / 8192)
+                + _RUNTIME_OVERHEAD_MB)
+
+    def can_load(self, model_path: str, *, ctx: int | None = None,
+                 status: dict | None = ...) -> tuple[bool, str]:
         """
-        Whether this model fits in RAM right now.
+        Whether this model fits right now, judged on COMMIT rather than RAM.
 
         Checked before every start because the failure mode is a frozen desktop,
         not an exception — and a model that "almost" fits still thrashes.
+
+        `status` is injectable for tests; the default reads the live machine.
+        A reading that cannot be taken does not block: an unknown is not a no.
         """
-        if not os.path.exists(model_path):
+        if not self._exists(model_path):
             return False, f"not found: {os.path.basename(model_path)}"
-        need_mb = os.path.getsize(model_path) / (1024 * 1024)
-        need_mb += 700                       # KV cache + runtime overhead
-        free = free_ram_mb()
-        if free is None:
+
+        if ctx is None:
+            ctx = Config().LLM_CONTEXT_SIZE
+        if status is ...:
+            status = memory_status()
+        if not status:
             return True, ""                  # cannot tell; do not block
+
+        need_mb = self._cost_mb(model_path, ctx)
 
         # SWITCHING frees the current model first. Without this, swapping
         # DeepSeek (4.4 GB) for Qwen3 (2.3 GB) is refused for lack of memory
         # that the swap itself would release — every switch would be blocked
         # once one model was loaded.
         reclaim_mb = 0.0
-        if self.model_path and os.path.exists(self.model_path):
+        if self.model_path and self._exists(self.model_path):
             if os.path.abspath(self.model_path) != os.path.abspath(model_path):
-                reclaim_mb = os.path.getsize(self.model_path) / (1024 * 1024) + 700
+                reclaim_mb = self._cost_mb(self.model_path, ctx)
 
-        available = free + reclaim_mb
-        if available - need_mb < _RAM_FLOOR_MB:
-            extra = (f" (+{reclaim_mb/1024:.1f} GB freed by unloading "
-                     f"{os.path.basename(self.model_path)})" if reclaim_mb else "")
+        commit_free = status["commit_free_mb"]
+        available = commit_free + reclaim_mb
+        if available - need_mb < _COMMIT_FLOOR_MB:
+            extra = (f", +{reclaim_mb/1024:.1f} GB freed by unloading "
+                     f"{os.path.basename(self.model_path)}" if reclaim_mb else "")
             return False, (
-                f"needs ~{need_mb/1024:.1f} GB, only {free/1024:.1f} GB free"
-                f"{extra}; close something first"
+                f"needs ~{need_mb/1024:.1f} GB of commit at ctx={ctx:,}, but only "
+                f"{commit_free/1024:.1f} GB is available{extra}. "
+                f"Close something, lower the context, or enlarge the pagefile "
+                f"(commit limit is {status['commit_limit_mb']/1024:.1f} GB)."
             )
         return True, ""
+
+    def vram_warning(self, model_path: str, n_gpu_layers: int) -> str | None:
+        """
+        Advisory only — VRAM is not a blocking check.
+
+        We cannot know how much of a model `-ngl N` will actually place on the
+        GPU without reading its layer count, so this reports a likely shortfall
+        rather than refusing. Free VRAM also moves during a session as the
+        desktop grows, so a hard gate here would refuse loads that would work.
+        """
+        if n_gpu_layers <= 0:
+            return None
+        free = free_vram_mb()
+        if free is None or not self._exists(model_path):
+            return None
+        size = self._size_mb(model_path)
+        if size > free:
+            return (f"{os.path.basename(model_path)} is {size/1024:.1f} GB but only "
+                    f"{free/1024:.1f} GB of VRAM is free — llama.cpp will keep the "
+                    f"remaining layers on the CPU.")
+        return None
 
     def stop(self, timeout: float = 10.0) -> None:
         """Stop the server we started. Frees its RAM."""
@@ -194,23 +289,35 @@ class ServerManager:
             return False, ("llama-server not found. Set LLAMA_SERVER_BIN in "
                            "the Settings screen (or config/config.py).")
 
-        ok, why = self.can_load(model_path)
-        if not ok:
-            return False, why
-
-        self.stop()
-        if port_open(self.port):
-            return False, (f"port {self.port} is already in use by another "
-                           f"llama-server. Stop it first.")
-
+        # Settings are resolved BEFORE the guard runs: the KV cache scales with
+        # the context size, so a guard that does not know ctx cannot price the
+        # load it is being asked to approve.
         cfg = self.cfg = Config()      # refresh: overlay may have changed since __init__
         ctx = ctx or cfg.LLM_CONTEXT_SIZE
         ngl = cfg.LLM_GPU_LAYERS if n_gpu_layers is None else n_gpu_layers
         threads = threads if threads is not None else cfg.LLM_N_THREADS
         batch = cfg.LLM_N_BATCH
 
+        ok, why = self.can_load(model_path, ctx=ctx)
+        if not ok:
+            return False, why
+
+        warn = self.vram_warning(model_path, ngl)
+        if warn:
+            log.warning(warn)
+
+        self.stop()
+        if port_open(self.port):
+            return False, (f"port {self.port} is already in use by another "
+                           f"llama-server. Stop it first.")
+
+        # -ctk/-ctv q8_0 halve the KV cache. At 8k that is 1,152 MB -> 576 MB
+        # for Qwen3-4B, whose 36 layers x 8 KV heads make its cache larger than
+        # the 7B's despite the model being half the size. The quality cost of an
+        # 8-bit KV cache is negligible; the memory is not.
         cmd = [exe, "-m", model_path, "-c", str(ctx), "-ngl", str(ngl),
                "-t", str(threads), "-tb", str(threads), "-b", str(batch),
+               "-ctk", "q8_0", "-ctv", "q8_0",
                "--port", str(self.port), "--host", "127.0.0.1"]
 
         log_path = os.path.join(os.path.dirname(os.path.dirname(
