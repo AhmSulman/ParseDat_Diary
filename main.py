@@ -129,6 +129,65 @@ def _doctor():
         print(f"DRIFT: {rep['drift']} inconsistency(ies). See the fixes above.")
 
 
+def _start(args):
+    """
+    Start the model server on the GPU, then open the interface.
+
+    The whole point of putting this in Python rather than in the .bat is that
+    every load goes through ServerManager: the commit guard runs, the KV cache
+    is priced against the real context size, and a load that would thrash is
+    refused with a reason instead of freezing the desktop. A batch file calling
+    llama-server.exe directly would bypass all of it.
+    """
+    import brain.server_manager as sm
+    from config.config import Config
+
+    cfg = Config()
+    model = args.model or cfg.LLM_MODEL_PATH
+    ctx = args.ctx or cfg.LLM_CONTEXT_SIZE
+    ngl = 0 if args.cpu else args.gpu_layers
+
+    if not os.path.exists(model):
+        print(f"Model not found: {model}")
+        print("Put a .gguf in data/models, or pass --model.")
+        return
+
+    st = sm.memory_status()
+    if st:
+        print(f"Commit available : {st['commit_free_mb']:,} MB of "
+              f"{st['commit_limit_mb']:,} MB")
+    vram = sm.free_vram_mb()
+    if vram is not None:
+        print(f"Free VRAM        : {vram:,} MB")
+
+    mgr = sm.get_manager()
+    if mgr.is_running():
+        print(f"llama-server already up on port {mgr.port} "
+              f"({mgr.running_model() or 'unknown model'}) — reusing it.")
+    else:
+        print(f"Starting {os.path.basename(model)}  ctx={ctx:,}  gpu-layers={ngl}")
+        ok, msg = mgr.start(model, ctx=ctx, n_gpu_layers=ngl)
+        print(("  " + msg) if ok else f"  FAILED: {msg}")
+        if not ok:
+            print("\nTry: main.py memory --free   (stops other model hosts)")
+            return
+
+    try:
+        from storage.library import LibraryService
+        c = LibraryService().report()["counts"]
+        print(f"Library          : {c['books_indexed']} books, "
+              f"{c['chunks_indexed']:,} chunks")
+    except Exception as ex:                                   # noqa: BLE001
+        log.warning(f"Could not read library: {ex}")
+
+    if args.console:
+        from chat.console import Console
+        Console().run()
+    else:
+        from gui.material_app import run_gui
+        run_gui()
+
+
 def _memory(args):
     """Report memory headroom and, with --free, stop other model hosts."""
     import brain.server_manager as sm
@@ -237,6 +296,19 @@ def main():
     search_p.add_argument("query", type=str, help="Search query")
     search_p.add_argument("--top-k", type=int, default=5)
 
+    # ── start ─────────────────────────────────────────────────────────────────
+    start_p = subparsers.add_parser(
+        "start", help="Start the model server on GPU, then open the app")
+    start_p.add_argument("--console", action="store_true",
+                         help="Open the terminal console instead of the GUI")
+    start_p.add_argument("--cpu", action="store_true",
+                         help="Force CPU (gpu-layers 0)")
+    start_p.add_argument("--gpu-layers", type=int, default=99,
+                         help="Layers to offload (default: 99 = all)")
+    start_p.add_argument("--ctx", type=int, default=None,
+                         help="Context size (default: from config)")
+    start_p.add_argument("--model", type=str, default=None)
+
     # ── memory ────────────────────────────────────────────────────────────────
     mem_p = subparsers.add_parser(
         "memory", help="Show memory headroom and what can load (read-only)")
@@ -322,6 +394,9 @@ def main():
         for i, res in enumerate(results, 1):
             print(f"  [{i}] {res['source']}  (score: {res['score']:.4f})")
             print(f"      {res['chunk'][:200].strip()}...\n")
+
+    elif args.command == "start":
+        _start(args)
 
     elif args.command == "memory":
         _memory(args)

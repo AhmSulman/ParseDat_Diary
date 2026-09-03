@@ -1,5 +1,3 @@
-# ParseDat_Diary — Chat with Books
-
 ```
 ██████╗ ██████╗
 ██╔══██╗██╔══██╗
@@ -9,235 +7,151 @@
 ╚═╝     ╚═════╝
 ```
 
-**Local AI. Your GPU. Your Data. No Cloud. No API Key.**
+# ParseDat_Diary
 
-RTX 4050 · ONNX CUDA · FAISS · Local LLM (llama.cpp) · RAG · Windows Service
+**Learn from your books — not just search them.**
 
----
+A local, offline RAG system that answers from your own library with page-level
+citations, running entirely on one laptop GPU. No cloud, no API key, no
+telemetry. Every answer names the book and page it came from, and every citation
+is checked against the passages the model was actually given.
 
-## 🚀 Quick Start
-
-### Step 1 — Install Python 3.10+
-https://www.python.org/downloads/
-
-### Step 2 — Install dependencies
-```
-pip install -r requirements.txt
-```
-
-For GPU LLM support (RTX 4050):
-```
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
-```
-
-### Step 3 — Download a local LLM model
-Go to: https://huggingface.co/TheBloke
-
-Recommended for RTX 4050 (6GB VRAM):
-- `Mistral-7B-Instruct-v0.2.Q4_K_M.gguf` (~4.4GB) ← Best
-- `phi-2.Q4_K_M.gguf` (~1.7GB) ← Fastest
-
-Put the `.gguf` file in: `data/models/`
-
-Then set `LLM_MODEL_PATH` in `config/config.py`.
-
-### Step 4 — Drop your PDFs
-Put all PDF files into: `data/input/`
-
-### Step 5 — Ingest (extract + index)
-```
-python main.py ingest
-```
-
-### Step 6 — Chat!
-```
-python main.py chat
-```
+> **Status: working foundation, unfinished product.** The retrieval-and-answer
+> loop runs end to end and is fast. The thing it is *becoming* — a tutor that
+> questions you back and remembers what you understand — is not built yet. The
+> rating below is honest about the gap.
 
 ---
 
-## 📋 All Commands
+## Quick start
 
-| Command | What it does |
-|---------|-------------|
-| `python main.py ingest` | Extract PDFs + build search index |
-| `python main.py ingest --reset` | Re-process everything from scratch |
-| `python main.py chat` | Chat with your books (terminal) |
-| `python main.py chat --model path/to/model.gguf` | Use a specific model |
-| `python main.py chat --gpu-layers 35` | Control GPU VRAM usage |
-| `python main.py server` | Launch REST API on port 8000 |
-| `python main.py search "your query"` | Search without chatting |
-| `python main.py service install` | Install as Windows service |
-| `python main.py service start/stop/remove` | Manage service |
+Double-click one of these:
 
----
+| | |
+|---|---|
+| **`Launch GUI (GPU).bat`** | KivyMD desktop app — library, reader, Ask AI, settings |
+| **`Launch Console (GPU).bat`** | Terminal console — ask, tune, manage |
 
-## 🏗️ Architecture
+Both start `llama-server` with full GPU offload first. They go through
+`main.py start` rather than calling `llama-server.exe` directly, so the memory
+guard runs and a load that would thrash the machine is refused with a reason
+instead of freezing the desktop.
 
-```
- PDFs
-  │
-  ▼
-[INGEST] PyMuPDF reads pages
-  │
-  ├─ Digital text? → [TEXT EXTRACTOR] → text
-  │
-  └─ Scanned page? → [GPU OCR] → ONNX CUDA / Tesseract → text
-                          ↑
-                     RTX 4050 VRAM
-  │
-  ▼
-[CHUNKER] Split text into ~1000 char overlapping chunks
-  │
-  ▼
-[EMBEDDER] sentence-transformers → 384-dim vectors
-  │
-  ▼
-[FAISS INDEX] Vector database saved to data/cache/
-  │
-  ▼
-  ┌─────────── At chat time ───────────┐
-  │                                    │
-  │  Your Question                     │
-  │       ↓                            │
-  │  [ENCODE] question → vector        │
-  │       ↓                            │
-  │  [RETRIEVE] top-5 similar chunks   │
-  │       ↓                            │
-  │  [PROMPT] question + book excerpts │
-  │       ↓                            │
-  │  [LOCAL LLM] llama.cpp + RTX 4050  │
-  │       ↓                            │
-  │  Your Answer (streamed live)       │
-  └────────────────────────────────────┘
-```
-
----
-
-## ⚙️ Configuration (`config/config.py`)
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `LLM_MODEL_PATH` | `data/models/model.gguf` | Your downloaded model |
-| `LLM_GPU_LAYERS` | `35` | GPU layers (RTX 4050 = 35 for 7B Q4) |
-| `LLM_CONTEXT_SIZE` | `4096` | Context window (tokens) |
-| `LLM_TEMPERATURE` | `0.7` | Creativity (0=precise, 1=creative) |
-| `ASYNC_WORKERS` | `4` | Parallel OCR workers |
-| `CHUNK_SIZE` | `1000` | Chars per text chunk |
-| `SEARCH_TOP_K` | `5` | Results retrieved per query |
-| `SERVER_PORT` | `8000` | Web API port |
-
----
-
-## 🖥️ Windows Service (Auto-start)
-
-Run as Administrator:
-```
-service\install_service.bat
-```
-
-Or manually:
-```
-python main.py service install
-python main.py service start
-```
-
-The service:
-- Starts automatically when Windows boots
-- Restarts itself after crashes (3 retries: 5s, 10s, 30s)
-- Runs the web API on port 8000
-
----
-
-## 🌐 Web API
-
-Start server:
-```
-python main.py server
-```
-
-Endpoints:
-```
-GET  http://localhost:8000/         → Health check
-GET  http://localhost:8000/status   → Index stats + model info
-POST http://localhost:8000/chat     → Ask a question (streaming)
-POST http://localhost:8000/search   → Search without answering
-```
-
-Chat example (curl):
 ```bash
-curl -X POST http://localhost:8000/chat \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What is the main thesis of this book?"}'
+_venv\Scripts\python.exe main.py doctor     # health check - run this first
+_venv\Scripts\python.exe main.py memory     # what can load right now
+_venv\Scripts\python.exe main.py ingest     # index anything new in data/input
 ```
 
 ---
 
-## 🔧 GPU OCR — Plug In Your Model
+## Measured, on an RTX 4050 Laptop (6 GB)
 
-To use a real ONNX GPU OCR model (instead of Tesseract):
+Numbers from this machine, not from a spec sheet.
 
-1. Export your model to ONNX format (PaddleOCR, TrOCR, EasyOCR all support this)
-2. Put the `.onnx` file in `data/models/`
-3. Set `ONNX_MODEL_PATH` in `config/config.py`
-4. Uncomment the session loading in `core/gpu_ocr.py → _init_gpu()`
-5. Fill in the pre/post-processing in `_infer_onnx()`
+| | CPU build | CUDA build |
+|---|---|---|
+| Prompt eval (4,057-token retrieval prompt) | 32 tok/s — **127 s** | **1,810 tok/s — 2.2 s** |
+| Generation | 7.66 tok/s | **33.5 tok/s** |
+| Full cited answer | ~4 minutes | **~41 s** |
+
+Prompt eval is the number that matters: reading the retrieved passages used to
+be two and a half minutes of every single answer.
+
+| | |
+|---|---|
+| Library | 4 books · 4,475 chunks · zero drift |
+| Embeddings | BAAI/bge-base-en-v1.5, 768-dim, vendored offline |
+| Index | FAISS HNSWFlat, neighbour expansion, arithmetic de-overlap |
+| Generation | DeepSeek-R1-Distill-Qwen-7B Q4_K_M via llama-server, fully GPU-resident |
+| Tests | 129, stdlib `unittest`, no model loaded |
 
 ---
 
-## 📁 Folder Structure
+## Honest rating
+
+| Area | Score | Why |
+|---|---|---|
+| **Data integrity** | 9/10 | `data/input/` is the sole authority; six derived stores reconcile against it. `doctor` reports drift, `sync` repairs it. A book is marked done only after its vectors land, so a crash cannot create silent holes — a bug that once left 11 books invisible. |
+| **Offline guarantee** | 9/10 | Embedder weights vendored inside the project and loaded by path, verified with the HuggingFace endpoint pointed at a dead host. No `trust_remote_code`, no silent fallback. |
+| **Memory safety** | 8/10 | Loads are priced against available *commit* — the limit Windows actually enforces — not free RAM. Six logged crashes traced and prevented. Still conservative rather than precise. |
+| **Speed** | 8/10 | ~9× faster end to end on GPU. The 7B fits in 6 GB of VRAM with an 8-bit KV cache. |
+| **Engineering discipline** | 8/10 | 129 tests, every non-obvious decision documented with the measurement behind it. Tests avoid loading models, so the suite runs in 0.3 s. |
+| **Citations** | 6/10 | Every `[N]` is validated against the supplied passages, so an out-of-range citation is a mechanically detectable hallucination. But the model frequently ignores the citation instruction entirely, and an uncited answer is only *flagged*, not fixed. |
+| **Retrieval precision** | **4/10** | Measured and weak. *"How does database replication handle failures"* now returns the right chapters. *"Maths behind machine learning"* still returns the book's **preface**, never the maths. Boilerplate pollution inside a single book is unsolved. |
+| **Answer quality** | **3/10** | Barely measured. There is no golden set, no grader, no score. One verified answer is one data point. |
+| **The actual product** | **1/10** | The tutor loop — questions, evidence-grounded grading, a memory of what you understand — is designed and specced, and **none of it is built**. |
+
+**Overall: 6/10 as a local RAG tool. 1/10 against what it is meant to become.**
+
+The foundation is genuinely solid — offline, fast, self-checking, hard to
+corrupt. What sits on top of it is still a search box.
+
+---
+
+## What is deliberately not done
+
+- **Retrieval scoping.** Answers draw on the whole library; they should draw on
+  1–3 books and a handful of sections. This is the structural fix for the
+  preface problem and it is not built.
+- **The learning loop.** Question generation, evidence-grounded grading, a
+  per-concept model of what you understand. Specced, unbuilt.
+- **Grader calibration.** Nothing may be built on LLM-generated grades until
+  ~50 hand-graded answers agree with the model ≥80% of the time.
+- **Token budgeting.** `CONTEXT_CHAR_BUDGET` counts characters. Code-dense text
+  runs 1.82 chars/token against 4.32 for prose, so 20,000 characters can be
+  ~11,000 tokens against an 8,192 context — and llama.cpp drops the front of
+  the prompt silently.
+- **ONNX GPU OCR.** Advertised in `core/gpu_ocr.py`, never executes. Tesseract
+  CPU is the only path that runs. Either wire it or delete the branch.
+- **Android client.** `android_main.py` exists and is untested against the
+  current server.
+
+Full punch list: [`OKF/NEXT.md`](OKF/NEXT.md). Current state:
+[`OKF/STATUS.md`](OKF/STATUS.md).
+
+---
+
+## How it works
 
 ```
-ParseDat_Diary/
-├── main.py              ← Entry point
-├── core/
-│   ├── async_pipeline.py ← 10x speed async engine
-│   ├── gpu_ocr.py        ← RTX 4050 batch OCR
-│   ├── extract_text.py   ← Digital text extraction
-│   └── ingest.py         ← PDF loader
-├── brain/
-│   ├── chunker.py        ← Smart text splitter
-│   ├── embedder.py       ← Text → vector
-│   ├── retriever.py      ← FAISS vector DB
-│   ├── llm.py            ← Local LLM (llama.cpp)
-│   └── rag.py            ← Full RAG pipeline
-├── chat/
-│   ├── cli.py            ← Terminal chat interface
-│   └── server.py         ← FastAPI web API
-├── storage/
-│   ├── exporter.py       ← Save .txt + .json
-│   ├── checkpoint.py     ← Crash-safe progress
-│   └── cache.py          ← Deduplication
-├── service/
-│   ├── windows_service.py ← Windows service daemon
-│   └── install_service.bat ← One-click installer
-├── config/config.py      ← All settings
-├── data/
-│   ├── input/            ← PUT PDFs HERE
-│   ├── models/           ← PUT .gguf MODEL HERE
-│   ├── txt/              ← Extracted text output
-│   ├── json/             ← JSON output
-│   └── cache/            ← FAISS index
-└── logs/app.log          ← Full activity log
+data/input/*.pdf|md|txt|log
+    → core/async_pipeline.py    4 async workers
+        → core/gpu_ocr.py       Tesseract (CPU)
+        → core/normalize.py     ligatures, de-hyphenation; idempotent
+        → core/quality.py       PASS/FAIL → data/quarantine/
+        → brain/chunker.py      1200/200 + page and heading locators
+        → brain/embedder.py     bge-base, vendored, 768-dim
+        → brain/retriever.py    FAISS HNSWFlat
+    → data/cache/parsedat.index + parsedat_meta.json + parsedat_manifest.json
+
+question
+    → retriever      top-6, expanded ±1, merged into continuous passages
+    → llm            numbered excerpts with page spans
+    → llama-server   streamed answer, GPU
+    → validator      every [N] checked against what was actually supplied
 ```
-MIT License
 
-Copyright (c) 2026 Ahmed Salman
+Three rules are load-bearing; breaking any of them loses data silently, and all
+three are explained in [`CLAUDE.md`](CLAUDE.md):
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. **Mark a book done only after its vectors land.**
+2. **`reindex` enumerates `data/input/`, never `data/txt/`** — walking the text
+   directory resurrects deleted books.
+3. **Chunk offsets are recorded after stripping** — de-overlap is arithmetic,
+   and pre-strip offsets corrupt every merged passage with no error raised.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+---
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## Requirements
+
+- Windows, Python 3.12, venv at `_venv` (**not** `.venv`)
+- NVIDIA GPU for the fast path — a CUDA llama.cpp build in the project root
+- Tesseract 5.5 for scanned PDFs
+- A commit limit with real headroom. `main.py memory` will tell you.
+
+---
+
+## Licence
+
+See [LICENSE](LICENSE).
