@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import sys
 import os
+import time
 
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -128,6 +129,53 @@ def _doctor():
         print(f"DRIFT: {rep['drift']} inconsistency(ies). See the fixes above.")
 
 
+def _memory(args):
+    """Report memory headroom and, with --free, stop other model hosts."""
+    import brain.server_manager as sm
+    from config.config import Config
+
+    def snapshot(label):
+        st = sm.memory_status()
+        vram = sm.free_vram_mb()
+        if st:
+            print(f"{label:8} commit {st['commit_free_mb']:>7,} MB free "
+                  f"of {st['commit_limit_mb']:,} MB limit"
+                  + (f"   VRAM {vram:,} MB free" if vram is not None else ""))
+        return st
+
+    before = snapshot("now")
+
+    hosts = sm.list_model_hosts()
+    if hosts:
+        print("\nModel hosts running:")
+        for h in hosts:
+            print(f"  {h['name']:<24} pid {h['pid']:<7} {h['commit_mb']:>6,} MB")
+    else:
+        print("\nModel hosts running: none")
+
+    if args.free:
+        stopped, msg = sm.kill_model_hosts(dry_run=args.dry_run)
+        print(f"\n{msg}")
+        if stopped and not args.dry_run:
+            time.sleep(2)          # let Windows reclaim before re-reading
+            snapshot("after")
+
+    print("\nBiggest commit consumers (reported only — never killed):")
+    for p in sm.list_processes(top=6):
+        print(f"  {p['name']:<24} pid {p['pid']:<7} {p['commit_mb']:>6,} MB")
+
+    if before:
+        print("\nCan these models load right now?")
+        mgr = sm.ServerManager()
+        models_dir = Config().MODELS_DIR
+        found = sorted(f for f in os.listdir(models_dir)) if os.path.isdir(models_dir) else []
+        for name in [f for f in found if f.endswith(".gguf")]:
+            ok, why = mgr.can_load(os.path.join(models_dir, name), ctx=Config().LLM_CONTEXT_SIZE)
+            print(f"  {'yes' if ok else 'NO ':<4} {name}")
+            if not ok:
+                print(f"       {why}")
+
+
 def _clean(args):
     from storage.library import LibraryService
 
@@ -188,6 +236,15 @@ def main():
     search_p = subparsers.add_parser("search", help="Semantic search without chat")
     search_p.add_argument("query", type=str, help="Search query")
     search_p.add_argument("--top-k", type=int, default=5)
+
+    # ── memory ────────────────────────────────────────────────────────────────
+    mem_p = subparsers.add_parser(
+        "memory", help="Show memory headroom and what can load (read-only)")
+    mem_p.add_argument("--free", action="store_true",
+                       help="Stop other local model hosts (llama.cpp, Ollama, "
+                            "LM Studio). Never touches anything else.")
+    mem_p.add_argument("--dry-run", action="store_true",
+                       help="With --free, list what would be stopped")
 
     # ── doctor ────────────────────────────────────────────────────────────────
     subparsers.add_parser(
@@ -265,6 +322,9 @@ def main():
         for i, res in enumerate(results, 1):
             print(f"  [{i}] {res['source']}  (score: {res['score']:.4f})")
             print(f"      {res['chunk'][:200].strip()}...\n")
+
+    elif args.command == "memory":
+        _memory(args)
 
     elif args.command == "doctor":
         _doctor()

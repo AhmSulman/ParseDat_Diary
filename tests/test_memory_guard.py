@@ -123,6 +123,36 @@ class TestRealReadingIsWellFormed(unittest.TestCase):
         # Commit available can never exceed the commit limit.
         self.assertLessEqual(st["commit_free_mb"], st["commit_limit_mb"])
 
+class TestRelativeModelPaths(unittest.TestCase):
+    """
+    start() launches the subprocess with cwd set to the llama.cpp folder,
+    because the exe needs its sibling DLLs. A relative model path therefore
+    resolves against THAT directory, not the project — the server exits with
+    "failed to open GGUF file ... No such file or directory" for a file that
+    plainly exists, while can_load() (which checks from this process's cwd)
+    passes. Observed on a real load, 2026-09-04.
+    """
+
+    def test_start_makes_the_model_path_absolute(self):
+        captured = {}
+
+        class _M(sm.ServerManager):
+            def __init__(self):
+                self.proc = None
+                self.model_path = None
+                self.port = 8084
+
+            def can_load(self, model_path, *, ctx=None, status=...):
+                captured["seen_by_guard"] = model_path
+                return False, "stop here"       # halt before launching anything
+
+        m = _M()
+        real = sm.find_server_binary()
+        if not real:
+            self.skipTest("no llama-server binary on this machine")
+        m.start("data/models/some-model.gguf", ctx=8192)
+        self.assertTrue(os.path.isabs(captured["seen_by_guard"]),
+                        f"path reached the guard still relative: {captured['seen_by_guard']}")
 
 if __name__ == "__main__":
     unittest.main()

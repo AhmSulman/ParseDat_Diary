@@ -166,6 +166,84 @@ def free_vram_mb() -> int | None:
     return None
 
 
+# ── Reclaiming memory from other model hosts ─────────────────────────────────
+#
+# An ALLOWLIST, deliberately. The obvious version of this feature — "kill
+# whatever is using the most memory" — is the most dangerous command the app
+# could offer. Of the six Resource-Exhaustion events logged on this machine the
+# top consumers were virtualdj.exe at 6.02 GB and msedge.exe at 9.75 GB: real
+# work, killed without warning.
+#
+# nvidia-smi cannot rescue a smarter version either. On this laptop GPU
+# --query-compute-apps reports used_gpu_memory as [N/A] for every process and
+# lists explorer.exe and dwm.exe among them, so there is no reliable way to rank
+# GPU consumers and no way to tell a hog from the desktop.
+#
+# So: only processes whose entire job is hosting a model, all of which are
+# trivially restartable and hold no unsaved state. Everything else is reported,
+# never killed.
+MODEL_HOST_PROCESSES = (
+    "llama-server", "llama-cli", "llama-bench",        # llama.cpp
+    "ollama", "ollama app", "ollama_llama_server",     # Ollama
+    "LM Studio", "lms",                                # LM Studio
+    "koboldcpp", "jan", "gpt4all",                     # other local hosts
+)
+
+
+def _ps(script: str) -> str:
+    """Run a PowerShell snippet, returning stdout ('' on any failure)."""
+    try:
+        out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
+                             capture_output=True, text=True, timeout=20)
+        return out.stdout if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def list_processes(top: int = 8) -> list[dict]:
+    """Biggest commit consumers, for reporting. Never used to decide a kill."""
+    raw = _ps("Get-Process | Sort-Object PagedMemorySize64 -Descending | "
+              f"Select-Object -First {int(top)} Name,Id,PagedMemorySize64 | "
+              "ForEach-Object { '{0}|{1}|{2}' -f $_.Name,$_.Id,$_.PagedMemorySize64 }")
+    out = []
+    for line in raw.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) == 3 and parts[2].isdigit():
+            out.append({"name": parts[0], "pid": int(parts[1]),
+                        "commit_mb": int(parts[2]) // (1024 * 1024)})
+    return out
+
+
+def list_model_hosts() -> list[dict]:
+    """Running processes from MODEL_HOST_PROCESSES, with their commit charge."""
+    wanted = {n.lower() for n in MODEL_HOST_PROCESSES}
+    return [p for p in list_processes(top=400) if p["name"].lower() in wanted]
+
+
+def kill_model_hosts(dry_run: bool = False) -> tuple[list[dict], str]:
+    """
+    Stop every running model host. Returns (what was targeted, message).
+
+    Refuses anything not on the allowlist even if a caller asks — the filter is
+    applied here, not by the caller, so there is no way to widen it by accident.
+    """
+    targets = list_model_hosts()
+    if not targets:
+        return [], "nothing to stop — no model hosts are running"
+    if dry_run:
+        return targets, "dry run: nothing was stopped"
+
+    wanted = {n.lower() for n in MODEL_HOST_PROCESSES}
+    stopped = []
+    for p in targets:
+        if p["name"].lower() not in wanted:       # belt and braces
+            continue
+        _ps(f"Stop-Process -Id {int(p['pid'])} -Force -ErrorAction SilentlyContinue")
+        stopped.append(p)
+        log.info(f"Stopped {p['name']} (pid {p['pid']}, {p['commit_mb']:,} MB)")
+    return stopped, f"stopped {len(stopped)} model host(s)"
+
+
 class ServerManager:
     """Owns at most one llama-server process."""
 
@@ -314,6 +392,15 @@ class ServerManager:
         if not exe:
             return False, ("llama-server not found. Set LLAMA_SERVER_BIN in "
                            "the Settings screen (or config/config.py).")
+
+        # Absolute, before anything else touches it. The subprocess is launched
+        # with cwd set to the exe's folder (it needs its sibling DLLs), so a
+        # relative model path would resolve against the llama.cpp directory and
+        # the server would exit with "failed to open GGUF file ... No such file
+        # or directory" for a file that plainly exists. can_load() checks
+        # existence from THIS process's cwd, so the guard passed and the failure
+        # surfaced only in the server log.
+        model_path = os.path.abspath(model_path)
 
         # Settings are resolved BEFORE the guard runs: the KV cache scales with
         # the context size, so a guard that does not know ctx cannot price the
