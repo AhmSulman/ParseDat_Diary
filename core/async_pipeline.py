@@ -76,7 +76,7 @@ class AsyncPipeline:
             log.warning(f"No PDFs in '{self.cfg.INPUT_DIR}'. Drop some in and retry.")
             return
 
-        log.info(f"MAAN pipeline: {len(pdfs)} PDFs, {self.cfg.ASYNC_WORKERS} workers")
+        log.info(f"ParseDat_Diary pipeline: {len(pdfs)} PDFs, {self.cfg.ASYNC_WORKERS} workers")
         self.retriever.load()
 
         t0 = time.perf_counter()

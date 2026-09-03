@@ -1,7 +1,7 @@
 """
-MAAN Windows Service
+ParseDat_Diary Windows Service
 =====================
-Runs MAAN as a background Windows service that:
+Runs ParseDat_Diary as a background Windows service that:
   - Starts automatically when Windows boots
   - Restarts itself after crashes (auto-recovery)
   - Logs everything to logs/service.log
@@ -36,8 +36,8 @@ from logs.logger import log
 # ── Service Manager (cross-platform CLI) ─────────────────────────────────────
 
 class ServiceManager:
-    SERVICE_NAME = "MAANChatBooks"
-    DISPLAY_NAME = "MAAN - Chat with Books"
+    SERVICE_NAME = "ParseDatDiary"
+    DISPLAY_NAME = "ParseDat_Diary - Chat with Books"
 
     def handle(self, action: str):
         if sys.platform != "win32":
@@ -57,7 +57,7 @@ class ServiceManager:
             self._status()
 
     def _install(self):
-        log.info(f"📦 Installing MAAN as Windows service: {self.SERVICE_NAME}")
+        log.info(f"📦 Installing ParseDat_Diary as Windows service: {self.SERVICE_NAME}")
         log.info("   Make sure you're running as Administrator!")
         try:
             import win32serviceutil
@@ -111,9 +111,9 @@ def run_as_windows_service():
         print("pywin32 not installed. Run: pip install pywin32")
         sys.exit(1)
 
-    class MAANService(win32serviceutil.ServiceFramework):
-        _svc_name_ = "MAANChatBooks"
-        _svc_display_name_ = "MAAN - Chat with Books"
+    class ParseDatService(win32serviceutil.ServiceFramework):
+        _svc_name_ = "ParseDatDiary"
+        _svc_display_name_ = "ParseDat_Diary - Chat with Books"
         _svc_description_ = "Local AI book chat daemon — RTX accelerated RAG pipeline"
 
         def __init__(self, args):
@@ -127,33 +127,33 @@ def run_as_windows_service():
             self.running = False
 
         def SvcDoRun(self):
-            servicemanager.LogInfoMsg("MAAN service starting...")
-            self._run_maan()
+            servicemanager.LogInfoMsg("ParseDat_Diary service starting...")
+            self._run_app()
 
-        def _run_maan(self):
-            """Main service loop — runs the MAAN web API server."""
+        def _run_app(self):
+            """Main service loop — runs the ParseDat_Diary web API server."""
             from chat.server import run_server
             from config.config import Config
             cfg = Config()
 
             while self.running:
                 try:
-                    servicemanager.LogInfoMsg(f"MAAN starting API on port {cfg.SERVER_PORT}")
+                    servicemanager.LogInfoMsg(f"ParseDat_Diary starting API on port {cfg.SERVER_PORT}")
                     run_server(
                         host=cfg.SERVER_HOST,
                         port=cfg.SERVER_PORT,
                         model_path=cfg.LLM_MODEL_PATH,
                     )
                 except Exception as e:
-                    servicemanager.LogErrorMsg(f"MAAN crashed: {e}. Restarting in 5s...")
+                    servicemanager.LogErrorMsg(f"ParseDat_Diary crashed: {e}. Restarting in 5s...")
                     time.sleep(5)  # Wait before restart (Windows SCM will also retry)
 
     if len(sys.argv) == 1:
         servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(MAANService)
+        servicemanager.PrepareToHostSingle(ParseDatService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        win32serviceutil.HandleCommandLine(MAANService)
+        win32serviceutil.HandleCommandLine(ParseDatService)
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: maan-debug-apk
+          name: parsedat-diary-debug-apk
           path: bin/*.apk
           retention-days: 30
 

@@ -1,14 +1,14 @@
 """
-███╗   ███╗ █████╗  █████╗ ███╗   ██╗
-████╗ ████║██╔══██╗██╔══██╗████╗  ██║
-██╔████╔██║███████║███████║██╔██╗ ██║
-██║╚██╔╝██║██╔══██║██╔══██║██║╚██╗██║
-██║ ╚═╝ ██║██║  ██║██║  ██║██║ ╚████║
-╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+██████╗ ██████╗
+██╔══██╗██╔══██╗
+██████╔╝██║  ██║
+██╔═══╝ ██║  ██║
+██║     ██████╔╝
+╚═╝     ╚═════╝
 
-Chat with Books — Local AI. Your GPU. Your Data.
-=================================================
-RTX 4050 · ONNX CUDA · FAISS · Local LLM · RAG
+ParseDat_Diary — learn from your books, not just search them.
+==============================================================
+Local AI · Your GPU · Your data · RTX 4050 · FAISS · Local LLM · RAG
 """
 
 import argparse
@@ -46,8 +46,8 @@ from logs.logger import log
 def print_banner():
     print("""
 ╔══════════════════════════════════════════════════════╗
-║   M A A N  —  Chat with Books                       ║
-║   Local AI · RTX 4050 · No Cloud · No Censorship    ║
+║   P A R S E D A T _ D I A R Y  —  Chat with Books    ║
+║   Local AI · RTX 4050 · No Cloud · No Censorship     ║
 ╚══════════════════════════════════════════════════════╝
 """)
 
@@ -162,7 +162,7 @@ def main():
     print_banner()
 
     parser = argparse.ArgumentParser(
-        description="MAAN — Chat with Books (Local AI RAG System)"
+        description="ParseDat_Diary — Chat with Books (Local AI RAG System)"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

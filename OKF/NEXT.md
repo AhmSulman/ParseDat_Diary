@@ -85,7 +85,7 @@
   → `The class Keyword`) and is a ready future win — but the call was to discard
   for now.
 - **No DOCX conversion.** The defects originate in the PDF text layer, so
-  `pdf2docx` (which wraps PyMuPDF) inherits them exactly. MAAN already converts
+  `pdf2docx` (which wraps PyMuPDF) inherits them exactly. ParseDat_Diary already converts
   PDF→text; what was missing was cleanup, not a different container.
 - **Never insert spaces at `[a-z][A-Z]`.** 6,119 corpus hits are identifiers —
   `MutableMapping`, `ValueError`. This looks like a defect and is not.

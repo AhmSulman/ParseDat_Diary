@@ -1,6 +1,6 @@
 # Status — what's actually built (2026-08-24)
 
-MAAN is a local, offline RAG system: documents in `data/input/` → FAISS index →
+ParseDat_Diary is a local, offline RAG system: documents in `data/input/` → FAISS index →
 a local LLM answers from them with page-level citations. Windows, Python 3.12.0,
 venv is `_venv`.
 
@@ -18,7 +18,7 @@ Answers need a model server running:
 
 ```
 E:\llama-b10034-bin-win-cpu-x64\llama-server.exe ^
-  -m F:\Desktop\MAAN\data\models\DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf ^
+  -m F:\Desktop\ParseDat_Diary\data\models\DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf ^
   -ngl 0 -c 8192 -t 12 --port 8084
 ```
 

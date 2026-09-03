@@ -58,7 +58,7 @@ class RAGPipeline:
         return LocalLLM(model_path=model_path, gpu_layers=gpu_layers)
 
     def setup(self) -> bool:
-        log.info("Loading MAAN RAG pipeline...")
+        log.info("Loading ParseDat_Diary RAG pipeline...")
         loaded = self.retriever.load()
         self.manifest.load()
 

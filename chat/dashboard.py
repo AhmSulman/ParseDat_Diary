@@ -20,7 +20,7 @@ file deletion on every device on the network. So:
     cross-site GET can never wipe an index
 
 The page is fully self-contained: no CDN, no external fonts, consistent with
-MAAN being offline by design.
+ParseDat_Diary being offline by design.
 """
 
 from __future__ import annotations
@@ -162,7 +162,7 @@ def _render(rep: dict, allow_admin: bool) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MAAN Library</title>
+<title>ParseDat_Diary Library</title>
 <style>
 :root {{ --bg:#faf9f7; --fg:#1a1a1a; --mut:#6b6b6b; --line:#e3e0db;
          --ok:#1a7f4b; --okbg:#e6f4ec; --bad:#a3242b; --badbg:#fbeaea;
@@ -203,7 +203,7 @@ td.src {{ max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:
 .pill.warn {{ background:var(--warnbg); color:var(--warn); }}
 ul.q {{ font-size:.875rem; }} ul.q ul {{ color:var(--mut); }}
 </style></head><body><main>
-<h1>MAAN Library</h1>
+<h1>ParseDat_Diary Library</h1>
 {settings}
 {banner}
 <div class="tiles">{tiles}</div>

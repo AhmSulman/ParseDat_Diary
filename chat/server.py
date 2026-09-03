@@ -1,7 +1,7 @@
 """
-MAAN Web API Server
+ParseDat_Diary Web API Server
 ====================
-Exposes MAAN as a local HTTP API using FastAPI.
+Exposes ParseDat_Diary as a local HTTP API using FastAPI.
 
 Endpoints:
   GET  /              → Health check
@@ -29,7 +29,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, model_path: str = None,
         log.error("❌ FastAPI not installed → pip install fastapi uvicorn")
         return
 
-    app = FastAPI(title="MAAN - Chat with Books", version="3.2")
+    app = FastAPI(title="ParseDat_Diary - Chat with Books", version="3.2")
 
     # Allow browser access from any origin (for local UI)
     app.add_middleware(
@@ -52,7 +52,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, model_path: str = None,
 
     @app.get("/")
     def root():
-        return {"service": "MAAN - Chat with Books", "status": "running"}
+        return {"service": "ParseDat_Diary - Chat with Books", "status": "running"}
 
     @app.get("/status")
     def status():
@@ -92,7 +92,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, model_path: str = None,
     except Exception as e:
         log.warning(f"Dashboard not registered: {e}")
 
-    log.info(f"MAAN server at http://{host}:{port}")
+    log.info(f"ParseDat_Diary server at http://{host}:{port}")
     log.info(f"   library dashboard: http://127.0.0.1:{port}/ui")
     if allow_admin:
         log.warning("   admin routes ENABLED (loopback only)")

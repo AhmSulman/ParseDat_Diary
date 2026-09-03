@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-#  MAAN — GPU overlay  (NVIDIA CUDA)
+#  ParseDat_Diary — GPU overlay  (NVIDIA CUDA)
 #  Target: RTX 4050 Laptop, 6 GB VRAM, driver 610.88 / CUDA UMD 13.3
 #
 #  Install AFTER requirements.txt:
@@ -40,7 +40,7 @@ torch==2.12.0+cu126
 #
 # If neither works, reinstall the CPU build and set LLM_GPU_LAYERS = 0 in
 # config/config.py so the config stops claiming GPU offload it does not have.
-# Everything else in MAAN works without it; generation is just slower.
+# Everything else in ParseDat_Diary works without it; generation is just slower.
 
 
 # ── VRAM budget (why the embedder is not always on GPU) ──────

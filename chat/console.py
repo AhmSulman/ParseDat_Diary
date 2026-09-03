@@ -1,5 +1,5 @@
 """
-MAAN Console — the terminal interface
+ParseDat_Diary Console — the terminal interface
 ======================================
 One place to tune retrieval, manage the library, and ask questions, without
 editing config files or remembering flag names.
@@ -370,7 +370,7 @@ class Console:
     def run(self):
         cfg = self.cfg
         print("=" * 66)
-        print("  MAAN console — type 'help' for commands, 'exit' to quit")
+        print("  ParseDat_Diary console — type 'help' for commands, 'exit' to quit")
         print("=" * 66)
         try:
             from storage.manifest import Manifest
@@ -398,7 +398,7 @@ class Console:
 
         while True:
             try:
-                line = input("maan> ").strip()
+                line = input("parsedat> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break

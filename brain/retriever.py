@@ -40,8 +40,8 @@ from logs.logger import log
 from storage.manifest import Manifest
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INDEX_FILE = os.path.join(_ROOT, "data", "cache", "maan.index")
-META_FILE = os.path.join(_ROOT, "data", "cache", "maan_meta.json")
+INDEX_FILE = os.path.join(_ROOT, "data", "cache", "parsedat.index")
+META_FILE = os.path.join(_ROOT, "data", "cache", "parsedat_meta.json")
 
 _HNSW_M = 32
 

@@ -1,6 +1,6 @@
 @echo off
 echo.
-echo  MAAN — Chat with Books
+echo  ParseDat_Diary — Chat with Books
 echo  RTX 4050 · Local AI · Your Data
 echo.
 

@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-#  MAAN — Chat with Books
+#  ParseDat_Diary — Chat with Books
 #  Python 3.12.0  |  Venv: _venv
 #
 #  Base install (CPU-safe, works everywhere):

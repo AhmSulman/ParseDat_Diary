@@ -22,7 +22,7 @@ class SettingsFixture(unittest.TestCase):
     """Redirects the overlay file into a temp tree and resets the mtime cache."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="maan_settings_")
+        self.tmp = tempfile.mkdtemp(prefix="parsedat_settings_")
         self._saved_file = S.SETTINGS_FILE
         S.SETTINGS_FILE = os.path.join(self.tmp, "settings.json")
         S._cache = None

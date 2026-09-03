@@ -1,4 +1,4 @@
-# MAAN — Chat with Books
+# ParseDat_Diary — Chat with Books
 
 ## Project Overview
 Local RAG (Retrieval-Augmented Generation) system. PDFs in `data/input/` → FAISS vector index → LLM answers questions from the books. No cloud, no censorship, runs entirely on the user's RTX 4050 GPU.
@@ -58,7 +58,7 @@ data/input/*.pdf
         → brain/chunker.py      (1200 chars / 200 overlap + page metadata)
         → brain/embedder.py     (BAAI/bge-base-en-v1.5, 768-dim, vendored)
         → brain/retriever.py    (FAISS CPU HNSWFlat)
-    → data/cache/maan.index + maan_meta.json + maan_manifest.json
+    → data/cache/parsedat.index + parsedat_meta.json + parsedat_manifest.json
 
 chat: question
     → brain/retriever.py  top-6 chunks, expanded by ±1 and merged
@@ -74,7 +74,7 @@ chat: question
 | `brain/embedder.py` | sentence-transformers on CUDA/CPU |
 | `brain/retriever.py` | FAISS index; GPU path needs `faiss-gpu`, falls back to CPU HNSWFlat |
 | `brain/rag_pipeline.py` | RAG pipeline with `query_stream()` for live token streaming |
-| `gui/material_app.py` | KivyMD dark-theme GUI (MaanMaterialApp class) |
+| `gui/material_app.py` | KivyMD dark-theme GUI (ParseDatMaterialApp class) |
 | `gui/material_app.kv` | KV layout: Library / Read / Ask AI / Settings screens |
 | `storage/categories.py` | JSON-backed PDF category manager |
 | `storage/manifest.py` | Book-level record of the library — the only thing that knows the BOOK count |
@@ -184,7 +184,7 @@ trust the log line claiming "RTX mode".
 
 ## FAISS Index
 - Created by: `python main.py ingest`
-- Location: `data/cache/maan.index` + `data/cache/maan_meta.json`
+- Location: `data/cache/parsedat.index` + `data/cache/parsedat_meta.json`
 - Reset: delete both files OR `Checkpoint().reset()` then re-ingest
 - GPU FAISS needs `faiss-gpu` (hard to install on Windows — CPU HNSWFlat is the default)
 
@@ -202,7 +202,7 @@ trust the log line claiming "RTX mode".
 | A book exists but the AI never uses it | `doctor` will show it as a HOLE. `python main.py reindex` |
 | Ingest skips everything | Checkpoint says done. `doctor`, then `reindex` (holes) or `clean --checkpoint` |
 | "index was built at N dimensions" | Embedder changed. `python main.py reindex` |
-| Index/metadata desync warning | `python main.py reindex` — never edit `maan_meta.json` by hand |
+| Index/metadata desync warning | `python main.py reindex` — never edit `parsedat_meta.json` by hand |
 | A book was quarantined | `data/quarantine/<name>.report.json` names the failed metrics |
 | GPU not used | Verify: `torch.cuda.is_available()` and `llama_cpp.llama_supports_gpu_offload()`. See `requirements-gpu.txt` |
 | `pip.exe` exits 1 with no output | Use `_venv\Scripts\python.exe -m pip` instead |

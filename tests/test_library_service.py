@@ -28,7 +28,7 @@ class LibraryFixture(unittest.TestCase):
     """Redirects every store into a temp tree."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="maan_lib_")
+        self.tmp = tempfile.mkdtemp(prefix="parsedat_lib_")
         self.input_dir = os.path.join(self.tmp, "input")
         self.txt_dir = os.path.join(self.tmp, "txt")
         self.cache = os.path.join(self.tmp, "cache")
@@ -45,8 +45,8 @@ class LibraryFixture(unittest.TestCase):
         L._TXT = self.txt_dir
         L._QUAR = os.path.join(self.tmp, "quarantine")
         L._CATEGORIES = os.path.join(self.tmp, "categories.json")
-        L.INDEX_FILE = os.path.join(self.cache, "maan.index")
-        L.META_FILE = os.path.join(self.cache, "maan_meta.json")
+        L.INDEX_FILE = os.path.join(self.cache, "parsedat.index")
+        L.META_FILE = os.path.join(self.cache, "parsedat_meta.json")
         L.MANIFEST_FILE = M.MANIFEST_FILE = os.path.join(self.cache, "manifest.json")
         C._CKPT_DIR = os.path.join(self.tmp, "checkpoints")
         C.STATE_FILE = os.path.join(C._CKPT_DIR, "state.json")

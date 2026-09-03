@@ -214,7 +214,7 @@ class History:
 
         for t in turns:
             out += ["---", "", "## You", "", t.get("question", "").strip(), ""]
-            out += ["## MAAN", "", t.get("answer", "").strip(), ""]
+            out += ["## ParseDat_Diary", "", t.get("answer", "").strip(), ""]
             cites = t.get("citations") or []
             if cites:
                 out.append("**Sources**")

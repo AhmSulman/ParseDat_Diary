@@ -1,5 +1,5 @@
 """
-MAAN — Material Design desktop / Android shell (KivyMD 1.x)
+ParseDat_Diary — Material Design desktop / Android shell (KivyMD 1.x)
 ============================================================
 PDF library, ingest, preview, and local RAG Q&A.
 
@@ -65,7 +65,7 @@ PRESET_MODELS = [
 ]
 
 
-class MaanMaterialRoot(MDBoxLayout):
+class ParseDatMaterialRoot(MDBoxLayout):
     """Root widget; loaded from ``material_app.kv``."""
 
     status_library        = StringProperty("Drop PDFs into data/input or use Add PDFs.")
@@ -90,7 +90,7 @@ class MaanMaterialRoot(MDBoxLayout):
     active_category    = StringProperty("All PDFs")
     category_bar_text  = StringProperty("")
 
-    def __init__(self, app_ref: "MaanMaterialApp", **kwargs):
+    def __init__(self, app_ref: "ParseDatMaterialApp", **kwargs):
         super().__init__(**kwargs)
         self._app = app_ref
         self._selected_pdf: str | None = None
@@ -688,7 +688,7 @@ class MaanMaterialRoot(MDBoxLayout):
         restart_tag = {
             "server": "  ·  restart server",
             "reindex": "  ·  needs reindex",
-            "app": "  ·  restart MAAN",
+            "app": "  ·  restart ParseDat_Diary",
             None: "",
         }
 
@@ -784,7 +784,7 @@ class MaanMaterialRoot(MDBoxLayout):
         if grouped.get("reindex"):
             parts.append(f"run reindex ({', '.join(grouped['reindex'])})")
         if grouped.get("app"):
-            parts.append(f"restart MAAN ({', '.join(grouped['app'])})")
+            parts.append(f"restart ParseDat_Diary ({', '.join(grouped['app'])})")
 
         msg = f"Saved {len(changed_keys)} setting(s)."
         if parts:
@@ -1053,7 +1053,7 @@ class MaanMaterialRoot(MDBoxLayout):
             log.info(text)
 
 
-class MaanMaterialApp(MDApp):
+class ParseDatMaterialApp(MDApp):
     def __init__(
         self,
         model_path: str | None = None,
@@ -1065,10 +1065,10 @@ class MaanMaterialApp(MDApp):
         self.gpu_layers = gpu_layers
         self.rag = None
         self.rag_ok = False
-        self._root: MaanMaterialRoot | None = None
+        self._root: ParseDatMaterialRoot | None = None
 
     def build(self):
-        self.title = "MAAN — Chat with Books"
+        self.title = "ParseDat_Diary — Chat with Books"
 
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "DeepPurple"
@@ -1080,7 +1080,7 @@ class MaanMaterialApp(MDApp):
             return MDBoxLayout()
         Builder.load_file(str(kv_path))
 
-        root = MaanMaterialRoot(app_ref=self)
+        root = ParseDatMaterialRoot(app_ref=self)
         self._root = root
 
         threading.Thread(target=self._load_rag_background, daemon=True).start()
@@ -1123,11 +1123,11 @@ class MaanMaterialApp(MDApp):
 
 
 def run_gui(model_path: str | None = None, gpu_layers: int | None = None):
-    MaanMaterialApp(model_path=model_path, gpu_layers=gpu_layers).run()
+    ParseDatMaterialApp(model_path=model_path, gpu_layers=gpu_layers).run()
 
 
 if __name__ == "__main__":
-    mp     = os.environ.get("MAAN_MODEL_PATH") or None
-    layers = os.environ.get("MAAN_GPU_LAYERS")
+    mp     = os.environ.get("PARSEDAT_MODEL_PATH") or None
+    layers = os.environ.get("PARSEDAT_GPU_LAYERS")
     gl     = int(layers) if layers and str(layers).isdigit() else None
     run_gui(model_path=mp, gpu_layers=gl)

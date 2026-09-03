@@ -8,7 +8,7 @@ later, deliberately-deferred cleanup; see Phase 3).
 
 **Markdown ingestion, verified against real content.** `data/input/` now
 has 3 real `.md` files (Claude Code's changelog, 5,763 lines, plus two of
-MAAN's own planning docs) alongside the 13 PDFs — 16 books, 9,846 chunks,
+ParseDat_Diary's own planning docs) alongside the 13 PDFs — 16 books, 9,846 chunks,
 zero drift. Confirmed: quality gate's `authored=True` bypass passes them,
 `Chunker(markdown=True)` attaches the correct nearest-heading `section` to
 every chunk (hierarchy respected — `#` then `##`), retrieval returns

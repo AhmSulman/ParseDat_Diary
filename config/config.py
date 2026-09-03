@@ -1,5 +1,5 @@
 """
-MAAN Configuration -- All Settings in One Place
+ParseDat_Diary Configuration -- All Settings in One Place
 ================================================
 Class attributes below are the hardcoded defaults. A GUI-editable overlay
 in data/settings.json (see config/settings_store.py) layers on top of them

@@ -196,7 +196,7 @@ class LocalLLM:
 
         context_text = "".join(parts)
 
-        system = f"""You are MAAN. You answer questions using only the book excerpts provided below.
+        system = f"""You are ParseDat_Diary. You answer questions using only the book excerpts provided below.
 
 {header}RULES:
 - Use ONLY the numbered excerpts below. Do not add outside knowledge.

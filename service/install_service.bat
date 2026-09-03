@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-::  MAAN Windows Service Installer
+::  ParseDat_Diary Windows Service Installer
 ::  Run as Administrator!
 :: ============================================================
 NET SESSION >nul 2>&1
@@ -11,14 +11,14 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo  ███╗   ███╗ █████╗  █████╗ ███╗   ██╗
-echo  ████╗ ████║██╔══██╗██╔══██╗████╗  ██║
-echo  ██╔████╔██║███████║███████║██╔██╗ ██║
-echo  ██║╚██╔╝██║██╔══██║██╔══██║██║╚██╗██║
-echo  ██║ ╚═╝ ██║██║  ██║██║  ██║██║ ╚████║
-echo  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+echo  ██████╗ ██████╗
+echo  ██╔══██╗██╔══██╗
+echo  ██████╔╝██║  ██║
+echo  ██╔═══╝ ██║  ██║
+echo  ██║     ██████╔╝
+echo  ╚═╝     ╚═════╝
 echo.
-echo  MAAN — Chat with Books  ^|  Windows Service Installer
+echo  ParseDat_Diary — Chat with Books  ^|  Windows Service Installer
 echo.
 
 :: Install Python dependencies
@@ -31,22 +31,22 @@ python -c "import pywin32_postinstall; pywin32_postinstall.install()" 2>nul
 
 :: Install the service
 echo.
-echo [2/4] Registering MAAN Windows service...
+echo [2/4] Registering ParseDat_Diary Windows service...
 python main.py service install
 
 :: Start the service
 echo.
-echo [3/4] Starting MAAN service...
+echo [3/4] Starting ParseDat_Diary service...
 python main.py service start
 
 :: Show status
 echo.
 echo [4/4] Service status:
-sc query MAANChatBooks
+sc query ParseDatDiary
 
 echo.
 echo ============================================================
-echo  MAAN is now running as a Windows service!
+echo  ParseDat_Diary is now running as a Windows service!
 echo  API available at: http://localhost:8000
 echo.
 echo  Commands:

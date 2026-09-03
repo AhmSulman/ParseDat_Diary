@@ -34,7 +34,7 @@ import os
 from datetime import datetime, timezone
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MANIFEST_FILE = os.path.join(_ROOT, "data", "cache", "maan_manifest.json")
+MANIFEST_FILE = os.path.join(_ROOT, "data", "cache", "parsedat_manifest.json")
 
 _SCHEMA = 1
 

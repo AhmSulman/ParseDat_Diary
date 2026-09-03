@@ -1,12 +1,12 @@
-# MAAN — Chat with Books
+# ParseDat_Diary — Chat with Books
 
 ```
-███╗   ███╗ █████╗  █████╗ ███╗   ██╗
-████╗ ████║██╔══██╗██╔══██╗████╗  ██║
-██╔████╔██║███████║███████║██╔██╗ ██║
-██║╚██╔╝██║██╔══██║██╔══██║██║╚██╗██║
-██║ ╚═╝ ██║██║  ██║██║  ██║██║ ╚████║
-╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+██████╗ ██████╗
+██╔══██╗██╔══██╗
+██████╔╝██║  ██║
+██╔═══╝ ██║  ██║
+██║     ██████╔╝
+╚═╝     ╚═════╝
 ```
 
 **Local AI. Your GPU. Your Data. No Cloud. No API Key.**
@@ -188,7 +188,7 @@ To use a real ONNX GPU OCR model (instead of Tesseract):
 ## 📁 Folder Structure
 
 ```
-MAAN/
+ParseDat_Diary/
 ├── main.py              ← Entry point
 ├── core/
 │   ├── async_pipeline.py ← 10x speed async engine

@@ -1,7 +1,7 @@
 [app]
-title = MAAN
-package.name = maan
-package.domain = com.maan.chatbooks
+title = ParseDat_Diary
+package.name = parsedat_diary
+package.domain = com.parsedat.diary
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt
 source.exclude_dirs = .venv, .git, .buildozer, data/models, data/cache, data/checkpoints, data/txt, data/json, __pycache__, .github
@@ -26,7 +26,7 @@ android.archs = arm64-v8a
 # Permissions
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,MANAGE_EXTERNAL_STORAGE
 
-# Android entry point — uses the client app (connects to MAAN server)
+# Android entry point — uses the client app (connects to ParseDat_Diary server)
 android.entrypoint = android_main.py
 
 # Icons (place 512x512 icon.png in repo root)

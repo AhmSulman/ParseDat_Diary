@@ -77,7 +77,7 @@ class LlamaServerLLM(LocalLLM):
         Confirm a server is reachable and note which model it holds.
 
         Does not start the server — process management is the caller's job, so
-        that a crashed model never takes MAAN down with it.
+        that a crashed model never takes ParseDat_Diary down with it.
         """
         try:
             import httpx

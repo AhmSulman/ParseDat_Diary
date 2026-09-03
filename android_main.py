@@ -1,7 +1,7 @@
 """
-MAAN Android Client
+ParseDat_Diary Android Client
 ====================
-Connects to a MAAN desktop server (FastAPI at port 8000).
+Connects to a ParseDat_Diary desktop server (FastAPI at port 8000).
 The heavy AI runs on your PC/GPU; this app is the mobile front-end.
 
 Run on Android via buildozer.
@@ -36,7 +36,7 @@ KV = """
     md_bg_color: [0.05, 0.04, 0.09, 1]
 
     MDTopAppBar:
-        title: 'MAAN'
+        title: 'ParseDat_Diary'
         subtitle: 'Chat with Books'
         elevation: 6
         md_bg_color: app.theme_cls.primary_color
@@ -142,7 +142,7 @@ KV = """
                     md_bg_color: [0.14, 0.10, 0.24, 1]
                     MDTextField:
                         id: server_field
-                        hint_text: 'MAAN server URL'
+                        hint_text: 'ParseDat_Diary server URL'
                         text: root.server_url
                         mode: 'fill'
                         fill_color_normal: 0, 0, 0, 0
@@ -266,9 +266,9 @@ class AndroidRoot(MDBoxLayout):
             pass
 
 
-class MaanAndroidApp(MDApp):
+class ParseDatAndroidApp(MDApp):
     def build(self):
-        self.title = "MAAN"
+        self.title = "ParseDat_Diary"
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "DeepPurple"
         self.theme_cls.accent_palette  = "Amber"
@@ -277,4 +277,4 @@ class MaanAndroidApp(MDApp):
 
 
 if __name__ == "__main__":
-    MaanAndroidApp().run()
+    ParseDatAndroidApp().run()

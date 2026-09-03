@@ -14,9 +14,9 @@ THE MEMBERSHIP INVARIANT
 Derived state lives in six places, and deleting a PDF used to prune none of
 them:
 
-    data/cache/maan.index         vectors
-    data/cache/maan_meta.json     chunk metadata
-    data/cache/maan_manifest.json book records
+    data/cache/parsedat.index         vectors
+    data/cache/parsedat_meta.json     chunk metadata
+    data/cache/parsedat_manifest.json book records
     data/checkpoints/state.json   what ingest thinks is done
     data/txt/*.txt                extracted text
     data/categories.json          GUI categories
@@ -46,9 +46,9 @@ _TXT = os.path.join(_ROOT, "data", "txt")
 _QUAR = os.path.join(_ROOT, "data", "quarantine")
 _CATEGORIES = os.path.join(_ROOT, "data", "categories.json")
 
-INDEX_FILE = os.path.join(_CACHE, "maan.index")
-META_FILE = os.path.join(_CACHE, "maan_meta.json")
-MANIFEST_FILE = os.path.join(_CACHE, "maan_manifest.json")
+INDEX_FILE = os.path.join(_CACHE, "parsedat.index")
+META_FILE = os.path.join(_CACHE, "parsedat_meta.json")
+MANIFEST_FILE = os.path.join(_CACHE, "parsedat_manifest.json")
 
 # Per-book status
 INDEXED = "indexed"        # PDF present and in the index — the healthy state

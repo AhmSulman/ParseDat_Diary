@@ -1,5 +1,5 @@
 """
-MAAN Terminal Chat
+ParseDat_Diary Terminal Chat
 ==================
 Talk to your books directly from the terminal.
 
@@ -22,14 +22,14 @@ from logs.logger import log
 
 BANNER = """
 ╔══════════════════════════════════════════════════════╗
-║   M A A N  —  Chat with Books                       ║
+║   P A R S E D A T _ D I A R Y  —  Chat with Books    ║
 ║   Type your question. /help for commands.            ║
 ╚══════════════════════════════════════════════════════╝
 """
 
 HELP_TEXT = """
 Commands:
-  /quit, /exit      → Exit MAAN
+  /quit, /exit      → Exit ParseDat_Diary
   /clear            → Clear chat history
   /sources <query>  → Show retrieved chunks for a query
   /help             → Show this message
@@ -87,7 +87,7 @@ class ChatCLI:
                 continue
 
             # ── Normal chat ───────────────────────────────────────────────────
-            print("\nMaAN: ", end="", flush=True)
+            print("\nParseDat: ", end="", flush=True)
             try:
                 for token in self.rag.answer(user_input, stream=True):
                     print(token, end="", flush=True)
