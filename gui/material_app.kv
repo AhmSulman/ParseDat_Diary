@@ -155,6 +155,22 @@
                         theme_text_color: 'Secondary'
                         adaptive_height: True
 
+                    # Live library state, straight from LibraryService — the
+                    # same object `main.py doctor` uses, so this can never
+                    # disagree with the CLI.
+                    MDCard:
+                        size_hint_y: None
+                        height: dp(38)
+                        padding: dp(10), dp(4)
+                        radius: [dp(12)]
+                        elevation: 2
+                        md_bg_color: [0.10, 0.16, 0.22, 1]
+                        MDLabel:
+                            text: root.library_info
+                            font_style: 'Caption'
+                            theme_text_color: 'Secondary'
+                            adaptive_height: True
+
                     # Category filter bar
                     MDCard:
                         size_hint_y: None

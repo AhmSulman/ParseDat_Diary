@@ -69,6 +69,7 @@ class ParseDatMaterialRoot(MDBoxLayout):
     """Root widget; loaded from ``material_app.kv``."""
 
     status_library        = StringProperty("Drop PDFs into data/input or use Add PDFs.")
+    library_info          = StringProperty("—")
     ingest_status         = StringProperty("")
     pdf_list_compact      = StringProperty("—")
     pdf_chip_hint         = StringProperty("Choose PDF…")
@@ -112,6 +113,7 @@ class ParseDatMaterialRoot(MDBoxLayout):
             self._history.set_current(last)
 
         Clock.schedule_once(lambda *_: self.refresh_pdf_list(), 0)
+        Clock.schedule_once(lambda *_: self.refresh_library_info(), 0)
 
     def on_kv_post(self, base_widget):
         super().on_kv_post(base_widget)
@@ -206,6 +208,7 @@ class ParseDatMaterialRoot(MDBoxLayout):
         Clock.unschedule(self._ingest_pulse)
         self.ingest_progress_value = 1.0
         self.ingest_status = "Done. Index updated in data/cache."
+        self.refresh_library_info()
         self._toast("Ingest complete!")
         self.refresh_pdf_list()
         rag = getattr(self._app, "rag", None)
@@ -298,6 +301,10 @@ class ParseDatMaterialRoot(MDBoxLayout):
 
         menu_items = [
             {"text": "Library statistics", "on_release": stats},
+            {"text": "Reindex vectors", "on_release": lambda *_: self._menu_then(self.on_reindex)},
+            {"text": "Sync to disk", "on_release": lambda *_: self._menu_then(self.on_sync_library)},
+            {"text": "Remove a book…", "on_release": lambda *_: self._menu_then(lambda: self.show_remove_menu(btn))},
+            {"text": "Clear all chunks", "on_release": lambda *_: self._menu_then(self.on_clear_index)},
             {"text": "Reload PDF list",    "on_release": reload_list},
             {"text": "Config: edit config/config.py", "on_release": lambda *_: self._toast("Edit config/config.py")},
         ]
@@ -1046,11 +1053,195 @@ class ParseDatMaterialRoot(MDBoxLayout):
         self._turn_start = len(text)
         Clock.schedule_once(self._reflow_answer, 0)
 
+    def _menu_then(self, action):
+        """Dismiss the dropdown, then run the action on the next frame.
+
+        Opening a dialog while the menu is still closing leaves the dialog
+        behind the overlay and it cannot be clicked.
+        """
+        if self._pdf_menu:
+            self._pdf_menu.dismiss()
+        Clock.schedule_once(lambda *_: action(), 0.05)
+
     def _toast(self, text: str):
         try:
             Snackbar(text=text, duration=2.4).open()
         except Exception:
             log.info(text)
+
+    # ── Library management ───────────────────────────────────────────────────
+    #
+    # Every destructive action goes through _confirm() and every long one
+    # through _in_background(), so the UI cannot be left looking frozen and a
+    # mis-tap cannot delete an index. All of them call LibraryService, the same
+    # object `main.py doctor` uses, so the GUI can never report or do something
+    # the CLI would disagree with.
+    def _confirm(self, title: str, text: str, on_yes):
+        from kivymd.uix.button import MDFlatButton
+        from kivymd.uix.dialog import MDDialog
+
+        dialog = MDDialog(title=title, text=text)
+
+        def close(*_):
+            dialog.dismiss()
+
+        def go(*_):
+            dialog.dismiss()
+            on_yes()
+
+        dialog.buttons = [
+            MDFlatButton(text="CANCEL", on_release=close),
+            MDFlatButton(text="CONTINUE", on_release=go),
+        ]
+        dialog.open()
+
+    def _in_background(self, label: str, work, done=None):
+        """Run `work()` off the UI thread; `done(result)` is called on it."""
+        if self._ingest_thread and self._ingest_thread.is_alive():
+            self._toast("Another library job is still running.")
+            return
+        self.ingest_status = label
+        self.ingest_progress_value = 0.08
+        Clock.schedule_interval(self._ingest_pulse, 0.45)
+
+        def job():
+            try:
+                result = work()
+            except Exception as ex:                     # noqa: BLE001
+                log.exception(ex)
+                Clock.schedule_once(lambda *_: self._ingest_failed(str(ex)), 0)
+                return
+
+            def finish(*_):
+                self.ingest_progress_value = 1.0
+                self.ingest_status = ""
+                self.refresh_pdf_list()
+                self.refresh_library_info()
+                if done:
+                    done(result)
+
+            Clock.schedule_once(finish, 0)
+
+        self._ingest_thread = threading.Thread(target=job, daemon=True)
+        self._ingest_thread.start()
+
+    def refresh_library_info(self):
+        """One line of truth about the library, from LibraryService."""
+        try:
+            from storage.library import LibraryService
+            rep = LibraryService().report()
+            c = rep["counts"]
+            s = rep.get("settings") or {}
+            bits = [f"{c['books_indexed']} books",
+                    f"{c['chunks_indexed']:,} chunks"]
+            if s.get("embed_model"):
+                bits.append(str(s["embed_model"]).split("/")[-1])
+            if rep["healthy"]:
+                bits.append("healthy")
+            else:
+                if rep["holes"]:
+                    bits.append(f"{len(rep['holes'])} not indexed")
+                if any(rep["orphans"].values()):
+                    bits.append("orphans — run Sync")
+                if rep["pending"]:
+                    bits.append(f"{len(rep['pending'])} pending — run Ingest")
+            self.library_info = "  ·  ".join(bits)
+        except Exception as ex:                          # noqa: BLE001
+            log.warning(f"Library info failed: {ex}")
+            self.library_info = "Could not read library state"
+
+    def on_reindex(self):
+        """Rebuild vectors from cached text. No OCR, no PDF parsing."""
+        def work():
+            from core.reindex import reindex
+            return reindex(device="cuda")
+
+        self._confirm(
+            "Reindex vectors?",
+            "Rebuilds every vector from the extracted text already on disk. "
+            "No OCR and no re-reading of PDFs. Takes a few minutes.",
+            lambda: self._in_background(
+                "Re-embedding every chunk…", work,
+                lambda r: self._toast(
+                    f"Reindexed {r.get('books', '?')} book(s), "
+                    f"{r.get('chunks', 0):,} chunks")))
+
+    def on_sync_library(self):
+        """Reconcile every derived store against data/input/."""
+        def work():
+            from storage.library import LibraryService
+            return LibraryService().clean(orphans=True)
+
+        self._confirm(
+            "Sync to disk?",
+            "Removes index entries, text and manifest records belonging to "
+            "documents that are no longer in data/input. Nothing in "
+            "data/input is touched.",
+            lambda: self._in_background(
+                "Reconciling derived stores…", work,
+                lambda r: self._toast(
+                    f"Removed {sum(len(v) for v in r.values())} orphaned item(s)")))
+
+    def on_clear_index(self):
+        """Drop vectors and checkpoint, keeping PDFs and extracted text."""
+        def work():
+            from storage.library import LibraryService
+            return LibraryService().clean(index=True, checkpoint=True)
+
+        self._confirm(
+            "Clear all chunks?",
+            "Deletes the vector index, its metadata and the manifest, and "
+            "resets the checkpoint. Your PDFs and extracted text are kept, so "
+            "Reindex can rebuild everything without re-reading any PDF.",
+            lambda: self._in_background(
+                "Clearing index…", work,
+                lambda r: self._toast(
+                    f"Cleared {sum(len(v) for v in r.values())} file(s). "
+                    "Run Reindex to rebuild.")))
+
+    def remove_book(self, source: str):
+        """Delete one document and every derived record of it."""
+        def work():
+            from storage.library import LibraryService
+            svc = LibraryService()
+            ok = svc.purge_book(source)
+            path = os.path.join(Config().INPUT_DIR, source)
+            if os.path.exists(path):
+                os.remove(path)
+            return ok
+
+        self._confirm(
+            "Remove this book?",
+            f"Deletes {source} from data/input and removes its chunks, text "
+            f"and manifest entry. This cannot be undone from inside the app.",
+            lambda: self._in_background(
+                f"Removing {source}…", work,
+                lambda ok: self._toast(
+                    f"Removed {source}" if ok else f"Could not remove {source}")))
+
+    def show_remove_menu(self, btn):
+        """Pick a book to remove."""
+        from storage.library import LibraryService
+        books = sorted(LibraryService().pdfs_on_disk())
+        if not books:
+            self._toast("No documents in data/input.")
+            return
+        if self._pdf_menu:
+            self._pdf_menu.dismiss()
+
+        def make(src):
+            def go(*_):
+                if self._pdf_menu:
+                    self._pdf_menu.dismiss()
+                self.remove_book(src)
+            return go
+
+        self._pdf_menu = MDDropdownMenu(
+            caller=btn,
+            items=[{"text": b, "on_release": make(b)} for b in books],
+            width_mult=6, max_height=dp(400),
+        )
+        self._pdf_menu.open()
 
 
 class ParseDatMaterialApp(MDApp):
