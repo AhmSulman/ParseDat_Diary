@@ -22,6 +22,107 @@ from logs.logger import log
 from storage.manifest import Manifest
 
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+# Characters to wait before concluding a model is NOT showing its working.
+# <think> arrives at the very start when it arrives at all, so this only has to
+# outlast the first token or two. It was previously 6,000 — the whole answer had
+# to exceed that before anything was released, so a model emitting no tags at
+# all had every answer under 6,000 characters buffered forever and then reported
+# as "cut off". Measured: a correct 1,940-character answer was discarded.
+_DECIDE_AFTER = 200
+_HEARTBEAT_EVERY = 350
+
+
+def suppress_reasoning(tokens):
+    """
+    Yield display text from a token stream, dropping any reasoning block.
+
+    Reasoning is working-out, not the answer: it must not be shown as prose and
+    must not be scanned for citations, since a [3] mentioned while thinking is
+    not a claim.
+
+    Three shapes are handled, because which one arrives depends on how the
+    prompt was sent:
+
+      <think>...</think>answer   the chat template owns the tags (current path,
+                                 /v1/chat/completions)
+      ...</think>answer          a bare close, no opener — R1 through the older
+                                 /completion path with a raw prompt
+      answer                     no tags at all, which is also what R1 does for
+                                 many questions. This is the common case and the
+                                 one that used to be destroyed.
+    """
+    buf = ""
+    state = "unknown"          # unknown -> thinking | plain
+    announced = False
+    ticks = 0
+
+    for token in tokens:
+        if state == "plain":
+            yield token
+            continue
+
+        buf += token
+
+        if state == "unknown":
+            opened = buf.find(_THINK_OPEN)
+            closed = buf.find(_THINK_CLOSE)
+            if opened != -1 and (closed == -1 or opened < closed):
+                state = "thinking"
+                buf = buf[opened + len(_THINK_OPEN):]
+            elif closed != -1:
+                buf = buf[closed + len(_THINK_CLOSE):]
+                state = "plain"
+                if buf:
+                    yield buf.lstrip()
+                    buf = ""
+                continue
+            elif len(buf) >= _DECIDE_AFTER:
+                # Far enough in with no opening tag: this model is answering
+                # directly. Release what is held and stream from here, so a
+                # plain answer is not withheld until the stream closes.
+                state = "plain"
+                yield buf
+                buf = ""
+                continue
+            else:
+                continue
+
+        if state == "thinking":
+            closed = buf.find(_THINK_CLOSE)
+            if closed != -1:
+                buf = buf[closed + len(_THINK_CLOSE):]
+                state = "plain"
+                if announced:
+                    yield "]" + chr(10) + chr(10)
+                if buf:
+                    yield buf.lstrip()
+                    buf = ""
+                continue
+
+            # Heartbeat while reasoning is held back. Without it the UI shows
+            # nothing for the hundreds of tokens spent thinking, which reads as
+            # a freeze — the GUI was reported as "not responding" while working
+            # normally.
+            if not announced and len(buf) > 40:
+                announced = True
+                yield "[reasoning"
+            if announced:
+                dots = len(buf) // _HEARTBEAT_EVERY
+                if dots > ticks:
+                    ticks = dots
+                    yield "."
+
+    if state == "thinking":
+        if announced:
+            yield "]"
+        yield "\n[answer was cut off during reasoning — raise -c or n_predict]"
+    elif buf:
+        yield buf
+
+
 class RAGPipeline:
     def __init__(self, model_path: str | None = None, gpu_layers: int | None = None):
         cfg = Config()
@@ -109,71 +210,17 @@ class RAGPipeline:
 
         messages = self.llm.build_rag_messages(question, passages, library_titles=titles)
 
-        # Reasoning models emit <think>...</think> before answering. That is
-        # working-out, not the answer: it must not be shown as prose, and it
-        # must not be scanned for citations — a [3] mentioned while thinking is
-        # not a claim. Suppress it live, keep it out of the validated text.
-        # R1 opens its reasoning WITHOUT a <think> tag — the opener normally
-        # comes from the chat template, and we post a raw prompt to /completion.
-        # So the stream is: reasoning, then a bare </think>, then the answer.
-        # Waiting for an opening tag suppresses nothing and dumps the entire
-        # monologue, which is what happened on the first real run.
-        #
-        # Treat the stream as possibly-reasoning from the first token: hold it
-        # back, and if </think> arrives, discard everything before it. If enough
-        # text accumulates without one, this is not a reasoning model — release
-        # what was held and stream normally from then on.
+        # Reasoning is dropped by suppress_reasoning(); `collected` keeps the
+        # raw stream so citations are validated against what the model actually
+        # produced, not against the display text.
         collected: list[str] = []
-        buf = ""
-        state = "unknown"          # unknown -> thinking-confirmed | plain
-        announced = False
-        ticks = 0
-        PROBE_LIMIT = 6000         # chars held before concluding "no reasoning"
 
-        for token in self.llm.generate(messages, stream=stream):
-            collected.append(token)
-
-            if state == "plain":
+        def _tapped():
+            for token in self.llm.generate(messages, stream=stream):
+                collected.append(token)
                 yield token
-                continue
 
-            buf += token
-            end = buf.find("</think>")
-            if end != -1:
-                buf = buf[end + 8:]        # drop the reasoning entirely
-                state = "plain"
-                if announced:
-                    yield "]" + chr(10) + chr(10)
-                if buf:
-                    yield buf.lstrip()
-                    buf = ""
-                continue
-
-            if not announced and len(buf) > 40:
-                announced = True
-                yield "[reasoning"
-
-            # Heartbeat while the reasoning is held back. Without it the UI
-            # shows nothing for the 500-2000 tokens R1 spends thinking, which
-            # on CPU is 3-4 minutes and is indistinguishable from a freeze --
-            # the GUI was reported as "not responding" while working normally.
-            if announced:
-                dots = len(buf) // 350
-                if dots > ticks:
-                    ticks = dots
-                    yield "."
-
-            if len(buf) > PROBE_LIMIT:     # no reasoning block; release it
-                state = "plain"
-                yield buf
-                buf = ""
-
-        if buf and state != "plain":
-            # Ended mid-reasoning: nothing worth showing, but say so rather
-            # than returning an empty answer.
-            yield "\n[answer was cut off during reasoning — raise -c or n_predict]"
-        elif buf:
-            yield buf
+        yield from suppress_reasoning(_tapped())
 
         from brain.llm_server import strip_thinking
         yield from self._citation_footer(strip_thinking("".join(collected)), passages)
