@@ -75,3 +75,7 @@ data/sessions/
 
 # Per-machine settings overlay written by the Settings screen
 data/settings.json
+
+# llama.cpp binaries dropped into the project (4.5 GB) - found at runtime
+llama-*-bin-*/
+llama.cpp/

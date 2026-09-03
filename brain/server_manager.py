@@ -12,12 +12,17 @@ MEMORY IS GUARDED, NOT ASSUMED
 ------------------------------
 Loading a 7B here twice caused near-freezes: Windows keeps mmap'd model pages
 cached after a process exits, so loads accumulate. Every start() therefore
-checks free RAM against the model's size plus KV headroom and REFUSES rather
-than letting the machine thrash. Only one server runs at a time.
+prices the load and REFUSES rather than letting the machine thrash. Only one
+server runs at a time.
+
+The price is charged against COMMIT, not free physical RAM — see
+memory_status(). Free RAM is not the limit Windows enforces, and guarding on it
+believed in ~4.8 GB of headroom that did not exist.
 """
 
 from __future__ import annotations
 
+import glob
 import os
 import socket
 import subprocess
@@ -26,13 +31,34 @@ import time
 from config.config import Config
 from logs.logger import log
 
-# Where a llama.cpp binary release may live. First hit wins.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Absolute fallbacks, checked only after the project itself. These are tied to a
+# drive letter and so do not survive the project moving; the project-local
+# lookup below does.
 _CANDIDATE_DIRS = [
     r"E:\llama-b10034-bin-win-cpu-x64",
     r"E:\llama.cpp",
     r"C:\llama.cpp",
 ]
 _EXE = "llama-server.exe" if os.name == "nt" else "llama-server"
+
+
+def _project_candidates() -> list[str]:
+    """
+    llama.cpp builds unzipped inside the project, newest-looking first.
+
+    Globbed rather than named so dropping a newer build in needs no code change,
+    and reverse-sorted so `llama-b10034-...` wins over `llama-b9000-...`. Binaries
+    kept here move with the project and survive a change of drive letter, which
+    is why they are preferred over the absolute paths above.
+    """
+    out = []
+    for d in sorted(glob.glob(os.path.join(_ROOT, "llama*")), reverse=True):
+        if os.path.isdir(d):
+            out.append(d)
+    return out
+
 
 # Commit that must remain available AFTER the model is resident, in MB.
 #
@@ -62,7 +88,7 @@ def find_server_binary() -> str | None:
     explicit = getattr(cfg, "LLAMA_SERVER_BIN", None)
     if explicit and os.path.exists(explicit):
         return explicit
-    for d in _CANDIDATE_DIRS:
+    for d in _project_candidates() + _CANDIDATE_DIRS:
         p = os.path.join(d, _EXE)
         if os.path.exists(p):
             return p
