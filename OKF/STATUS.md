@@ -18,7 +18,7 @@ Answers need a model server running:
 
 ```
 E:\llama-b10034-bin-win-cpu-x64\llama-server.exe ^
-  -m F:\Desktop\ParseDat_Diary\data\models\DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf ^
+  -m C:\Users\ahmed\Desktop\ParseDat_Diary\data\models\DeepSeek-R1-Distill-Qwen-7B-Q4_K_M_2.gguf ^
   -ngl 0 -c 8192 -t 12 --port 8084
 ```
 

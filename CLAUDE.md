@@ -205,7 +205,7 @@ trust the log line claiming "RTX mode".
 | Index/metadata desync warning | `python main.py reindex` — never edit `parsedat_meta.json` by hand |
 | A book was quarantined | `data/quarantine/<name>.report.json` names the failed metrics |
 | GPU not used | Verify: `torch.cuda.is_available()` and `llama_cpp.llama_supports_gpu_offload()`. See `requirements-gpu.txt` |
-| `pip.exe` exits 1 with no output | Use `_venv\Scripts\python.exe -m pip` instead |
+| `pip.exe` silent or missing | The venv was moved; its launcher shims still hold the old path. Fix: `_venv\Scripts\python.exe -m pip install --force-reinstall --no-deps pip` |
 | Model not found | `LLM_MODEL_PATH` must be absolute; model is ~4.1 GB |
 | Tesseract errors | `TESSDATA_PREFIX` auto-set from registry, or `C:\Program Files\Tesseract-OCR\tessdata` |
 | GUI not launching | `python main.py gui`, not `python gui/material_app.py` |
