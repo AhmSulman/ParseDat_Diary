@@ -175,3 +175,23 @@ def heading_offsets(text: str) -> list[tuple[int, str]]:
         if title:
             out.append((m.start(), ("#" * level) + " " + title))
     return out
+
+
+# Page markers (`--- Page 12 ---`) must STAY in the stored chunk text: chunk
+# offsets are recorded against it and the retriever's de-overlap arithmetic
+# requires them to match character for character. They must not reach the
+# embedder or the prompt, though — they carry no meaning to match a query
+# against, and on the pre-reset corpus 3,928 of them spanned 38.8% of chunks
+# and cost ~14,480 tokens of pure furniture per full context window.
+#
+# Stripping therefore happens at the point of USE, never at the point of
+# storage. Chunker.strip_page_markers delegates here so the pattern is defined
+# once.
+PAGE_MARKER = _PAGE_MARKER
+
+
+def strip_furniture(text: str) -> str:
+    """Drop page markers from text about to be embedded or sent to the LLM."""
+    if not text:
+        return text
+    return PAGE_MARKER.sub("", text).strip()

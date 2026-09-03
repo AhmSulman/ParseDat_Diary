@@ -22,6 +22,7 @@ RECOMMENDED MODELS for RTX 4050 (6GB VRAM):
 """
 
 import os
+from core.normalize import strip_furniture
 from logs.logger import log
 from config.config import Config
 
@@ -185,7 +186,7 @@ class LocalLLM:
         parts, used = [], 0
         for i, chunk in enumerate(context_chunks, 1):
             source = chunk.get("source", "unknown")
-            text = chunk.get("chunk", "")
+            text = strip_furniture(chunk.get("chunk", ""))
             loc = locate(chunk)
 
             block = f"\n[{i}] {loc}\n{text}\n"

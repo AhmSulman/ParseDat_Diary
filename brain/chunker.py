@@ -28,10 +28,8 @@ which is only correct if the offsets match the stored strings character for
 character. Recording pre-strip offsets would silently corrupt every merge.
 """
 
-import re
-
 from config.config import Config
-from core.normalize import heading_offsets, page_offsets
+from core.normalize import PAGE_MARKER, heading_offsets, page_offsets
 
 # Break points, best first: paragraph, line, then sentence enders.
 _SEPARATORS = ["\n\n", "\n", ". ", "! ", "? "]
@@ -41,8 +39,6 @@ _SEPARATORS = ["\n\n", "\n", ". ", "! ", "? "]
 # which is what makes .md retrieval coherent instead of mushy.
 _MD_SEPARATORS = ["\n# ", "\n## ", "\n### ", "\n#### ",
                   "\n\n", "\n", ". ", "! ", "? "]
-
-_PAGE_MARKER = re.compile(r"-{2,}\s*Page\s+\d+[^\n]*?-{2,}")
 
 
 class Chunker:
@@ -192,4 +188,4 @@ class Chunker:
     @staticmethod
     def strip_page_markers(text: str) -> str:
         """Remove `--- Page N ---` lines. For display, never before chunking."""
-        return _PAGE_MARKER.sub("", text)
+        return PAGE_MARKER.sub("", text)

@@ -39,6 +39,7 @@ import os
 import numpy as np
 
 from config.config import Config
+from core.normalize import strip_furniture
 from logs.logger import log
 
 # Must exceed CHUNK_SIZE (1200), or chunks are silently truncated before
@@ -211,7 +212,7 @@ class Embedder:
         if model is None or not text or not text.strip():
             return None
         return model.encode(
-            text[:_CHAR_CAP],
+            strip_furniture(text)[:_CHAR_CAP],
             normalize_embeddings=True,
             convert_to_numpy=True,
         )
@@ -238,7 +239,7 @@ class Embedder:
             return [None] * len(texts)
         if not texts:
             return []
-        capped = [t[:_CHAR_CAP] for t in texts]
+        capped = [strip_furniture(t)[:_CHAR_CAP] for t in texts]
         batch_size = 64 if _device == "cuda" else 16
         return model.encode(
             capped,
