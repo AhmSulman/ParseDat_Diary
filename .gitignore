@@ -76,9 +76,14 @@ data/sessions/
 # Per-machine settings overlay written by the Settings screen
 data/settings.json
 
-# llama.cpp binaries dropped into the project (4.5 GB) - found at runtime
+# llama.cpp binaries and their release archives. The directory pattern
+# alone was not enough: `llama-*-bin-*/` matches directories only, so the
+# root-level .zip files were picked up by `git add -A` and rejected by
+# GitHub at 373 MB and 238 MB.
 llama-*-bin-*/
 llama.cpp/
+llama-*.zip
+cudart-*.zip
 
 # Download staging for llama.cpp release zips
 .dl/
